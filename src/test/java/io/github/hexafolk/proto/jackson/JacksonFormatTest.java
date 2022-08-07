@@ -1,4 +1,4 @@
-package com.xflowpay.protobuf.util.jackson;
+package io.github.hexafolk.proto.jackson;
 
 import org.junit.jupiter.api.Test;
 
