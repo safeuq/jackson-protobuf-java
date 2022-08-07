@@ -28,21 +28,18 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package com.google.protobuf.util;
+package com.xflowpay.protobuf.util.jackson;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.TreeNode;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
+import com.fasterxml.jackson.databind.node.ValueNode;
 import com.google.common.base.Preconditions;
 import com.google.common.io.BaseEncoding;
-import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonIOException;
-import com.google.gson.JsonNull;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonPrimitive;
-import com.google.gson.stream.JsonReader;
 import com.google.protobuf.Any;
 import com.google.protobuf.BoolValue;
 import com.google.protobuf.ByteString;
@@ -72,9 +69,11 @@ import com.google.protobuf.Timestamp;
 import com.google.protobuf.UInt32Value;
 import com.google.protobuf.UInt64Value;
 import com.google.protobuf.Value;
+import com.google.protobuf.util.Durations;
+import com.google.protobuf.util.FieldMaskUtil;
+import com.google.protobuf.util.JsonFormat.TypeRegistry;
+import com.google.protobuf.util.Timestamps;
 import java.io.IOException;
-import java.io.Reader;
-import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.text.ParseException;
@@ -83,6 +82,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,24 +91,20 @@ import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
 /**
- * Utility classes to convert protobuf messages to/from JSON format. The JSON
- * format follows Proto3 JSON specification and only proto3 features are
- * supported. Proto2 only features (e.g., extensions and unknown fields) will
- * be discarded in the conversion. That is, when converting proto2 messages
- * to JSON format, extensions and unknown fields will be treated as if they
- * do not exist. This applies to proto2 messages embedded in proto3 messages
- * as well.
+ * Utility classes to convert protobuf messages to/from JSON format. The JSON format follows Proto3
+ * JSON specification and only proto3 features are supported. Proto2 only features (e.g., extensions
+ * and unknown fields) will be discarded in the conversion. That is, when converting proto2 messages
+ * to JSON format, extensions and unknown fields will be treated as if they do not exist. This
+ * applies to proto2 messages embedded in proto3 messages as well.
  */
-public class JsonFormat {
-  private static final Logger logger = Logger.getLogger(JsonFormat.class.getName());
+public class JacksonFormat {
+  private static final Logger logger = Logger.getLogger(JacksonFormat.class.getName());
 
-  private JsonFormat() {}
+  private JacksonFormat() {}
 
-  /**
-   * Creates a {@link Printer} with default configurations.
-   */
-  public static Printer printer() {
-    return new Printer(
+  /** Creates a {@link PrinterBuilder} with default configurations. */
+  public static PrinterBuilder printerBuilder() {
+    return new PrinterBuilder(
         com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
         TypeRegistry.getEmptyTypeRegistry(),
         /* alwaysOutputDefaultValueFields */ false,
@@ -116,13 +112,13 @@ public class JsonFormat {
         /* preservingProtoFieldNames */ false,
         /* omittingInsignificantWhitespace */ false,
         /* printingEnumsAsInts */ false,
-        /* sortingMapKeys */ false);
+        /* sortingMapKeys */ false,
+        /* retainUnsetFieldsAsNull */ false,
+        /* omitNullFields */ false);
   }
 
-  /**
-   * A Printer converts protobuf message to JSON format.
-   */
-  public static class Printer {
+  /** A Printer converts protobuf message to JSON format. */
+  public static class PrinterBuilder {
     private final com.google.protobuf.TypeRegistry registry;
     private final TypeRegistry oldRegistry;
     // NOTE: There are 3 states for these *defaultValueFields variables:
@@ -139,8 +135,10 @@ public class JsonFormat {
     private final boolean omittingInsignificantWhitespace;
     private final boolean printingEnumsAsInts;
     private final boolean sortingMapKeys;
+    private final boolean treatDefaultFieldsAsNull;
+    private final boolean omitNullFields;
 
-    private Printer(
+    private PrinterBuilder(
         com.google.protobuf.TypeRegistry registry,
         TypeRegistry oldRegistry,
         boolean alwaysOutputDefaultValueFields,
@@ -148,7 +146,9 @@ public class JsonFormat {
         boolean preservingProtoFieldNames,
         boolean omittingInsignificantWhitespace,
         boolean printingEnumsAsInts,
-        boolean sortingMapKeys) {
+        boolean sortingMapKeys,
+        boolean treatDefaultFieldsAsNull,
+        boolean omitNullFields) {
       this.registry = registry;
       this.oldRegistry = oldRegistry;
       this.alwaysOutputDefaultValueFields = alwaysOutputDefaultValueFields;
@@ -157,20 +157,22 @@ public class JsonFormat {
       this.omittingInsignificantWhitespace = omittingInsignificantWhitespace;
       this.printingEnumsAsInts = printingEnumsAsInts;
       this.sortingMapKeys = sortingMapKeys;
+      this.treatDefaultFieldsAsNull = treatDefaultFieldsAsNull;
+      this.omitNullFields = omitNullFields;
     }
 
     /**
-     * Creates a new {@link Printer} using the given registry. The new Printer clones all other
-     * configurations from the current {@link Printer}.
+     * Creates a new {@link PrinterBuilder} using the given registry. The new Printer clones all other
+     * configurations from the current {@link PrinterBuilder}.
      *
      * @throws IllegalArgumentException if a registry is already set.
      */
-    public Printer usingTypeRegistry(TypeRegistry oldRegistry) {
+    public PrinterBuilder usingTypeRegistry(TypeRegistry oldRegistry) {
       if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
           || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
         throw new IllegalArgumentException("Only one registry is allowed.");
       }
-      return new Printer(
+      return new PrinterBuilder(
           com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -178,21 +180,23 @@ public class JsonFormat {
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     /**
-     * Creates a new {@link Printer} using the given registry. The new Printer clones all other
-     * configurations from the current {@link Printer}.
+     * Creates a new {@link PrinterBuilder} using the given registry. The new Printer clones all other
+     * configurations from the current {@link PrinterBuilder}.
      *
      * @throws IllegalArgumentException if a registry is already set.
      */
-    public Printer usingTypeRegistry(com.google.protobuf.TypeRegistry registry) {
+    public PrinterBuilder usingTypeRegistry(com.google.protobuf.TypeRegistry registry) {
       if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
           || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
         throw new IllegalArgumentException("Only one registry is allowed.");
       }
-      return new Printer(
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -200,37 +204,38 @@ public class JsonFormat {
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     /**
-     * Creates a new {@link Printer} that will also print fields set to their
-     * defaults. Empty repeated fields and map fields will be printed as well.
-     * The new Printer clones all other configurations from the current
-     * {@link Printer}.
+     * Creates a new {@link PrinterBuilder} that will also print fields set to their defaults. Empty
+     * repeated fields and map fields will be printed as well. The new Printer clones all other
+     * configurations from the current {@link PrinterBuilder}.
      */
-    public Printer includingDefaultValueFields() {
+    public PrinterBuilder includingDefaultValueFields() {
       checkUnsetIncludingDefaultValueFields();
-      return new Printer(
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           true,
-          Collections.<FieldDescriptor>emptySet(),
+          Collections.emptySet(),
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     /**
-     * Creates a new {@link Printer} that will print enum field values as integers instead of as
-     * string.
-     * The new Printer clones all other configurations from the current
-     * {@link Printer}.
+     * Creates a new {@link PrinterBuilder} that will print enum field values as integers instead of as
+     * string. The new Printer clones all other configurations from the current {@link PrinterBuilder}.
      */
-    public Printer printingEnumsAsInts() {
+    public PrinterBuilder printingEnumsAsInts() {
       checkUnsetPrintingEnumsAsInts();
-      return new Printer(
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -238,7 +243,9 @@ public class JsonFormat {
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           true,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     private void checkUnsetPrintingEnumsAsInts() {
@@ -248,19 +255,19 @@ public class JsonFormat {
     }
 
     /**
-     * Creates a new {@link Printer} that will also print default-valued fields if their
+     * Creates a new {@link PrinterBuilder} that will also print default-valued fields if their
      * FieldDescriptors are found in the supplied set. Empty repeated fields and map fields will be
      * printed as well, if they match. The new Printer clones all other configurations from the
-     * current {@link Printer}. Call includingDefaultValueFields() with no args to unconditionally
+     * current {@link PrinterBuilder}. Call includingDefaultValueFields() with no args to unconditionally
      * output all fields.
      */
-    public Printer includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
+    public PrinterBuilder includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
       Preconditions.checkArgument(
           null != fieldsToAlwaysOutput && !fieldsToAlwaysOutput.isEmpty(),
           "Non-empty Set must be supplied for includingDefaultValueFields.");
 
       checkUnsetIncludingDefaultValueFields();
-      return new Printer(
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           false,
@@ -268,7 +275,9 @@ public class JsonFormat {
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     private void checkUnsetIncludingDefaultValueFields() {
@@ -279,13 +288,12 @@ public class JsonFormat {
     }
 
     /**
-     * Creates a new {@link Printer} that is configured to use the original proto
-     * field names as defined in the .proto file rather than converting them to
-     * lowerCamelCase. The new Printer clones all other configurations from the
-     * current {@link Printer}.
+     * Creates a new {@link PrinterBuilder} that is configured to use the original proto field names as
+     * defined in the .proto file rather than converting them to lowerCamelCase. The new Printer
+     * clones all other configurations from the current {@link PrinterBuilder}.
      */
-    public Printer preservingProtoFieldNames() {
-      return new Printer(
+    public PrinterBuilder preservingProtoFieldNames() {
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -293,12 +301,13 @@ public class JsonFormat {
           true,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
-
     /**
-     * Create a new {@link Printer} that will omit all insignificant whitespace in the JSON output.
+     * Create a new {@link PrinterBuilder} that will omit all insignificant whitespace in the JSON output.
      * This new Printer clones all other configurations from the current Printer. Insignificant
      * whitespace is defined by the JSON spec as whitespace that appear between JSON structural
      * elements:
@@ -312,10 +321,10 @@ public class JsonFormat {
      * </pre>
      *
      * See <a href="https://tools.ietf.org/html/rfc7159">https://tools.ietf.org/html/rfc7159</a>
-     * current {@link Printer}.
+     * current {@link PrinterBuilder}.
      */
-    public Printer omittingInsignificantWhitespace() {
-      return new Printer(
+    public PrinterBuilder omittingInsignificantWhitespace() {
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -323,11 +332,13 @@ public class JsonFormat {
           preservingProtoFieldNames,
           true,
           printingEnumsAsInts,
-          sortingMapKeys);
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
 
     /**
-     * Create a new {@link Printer} that will sort the map keys in the JSON output.
+     * Create a new {@link PrinterBuilder} that will sort the map keys in the JSON output.
      *
      * <p>Use of this modifier is discouraged, the generated JSON messages are equivalent with and
      * without this option set, but there are some corner use cases that demand a stable output,
@@ -335,10 +346,10 @@ public class JsonFormat {
      *
      * <p>The generated order is not well-defined and should not be depended on, but it's stable.
      *
-     * <p>This new Printer clones all other configurations from the current {@link Printer}.
+     * <p>This new Printer clones all other configurations from the current {@link PrinterBuilder}.
      */
-    public Printer sortingMapKeys() {
-      return new Printer(
+    public PrinterBuilder sortingMapKeys() {
+      return new PrinterBuilder(
           registry,
           oldRegistry,
           alwaysOutputDefaultValueFields,
@@ -346,6 +357,36 @@ public class JsonFormat {
           preservingProtoFieldNames,
           omittingInsignificantWhitespace,
           printingEnumsAsInts,
+          true,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
+    }
+
+    public PrinterBuilder treatDefaultFieldsAsNull() {
+      return new PrinterBuilder(
+          registry,
+          oldRegistry,
+          alwaysOutputDefaultValueFields,
+          includingDefaultValueFields,
+          preservingProtoFieldNames,
+          omittingInsignificantWhitespace,
+          printingEnumsAsInts,
+          sortingMapKeys,
+          true,
+          omitNullFields);
+    }
+
+    public PrinterBuilder omitNullFields() {
+      return new PrinterBuilder(
+          registry,
+          oldRegistry,
+          alwaysOutputDefaultValueFields,
+          includingDefaultValueFields,
+          preservingProtoFieldNames,
+          omittingInsignificantWhitespace,
+          printingEnumsAsInts,
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
           true);
     }
 
@@ -356,43 +397,23 @@ public class JsonFormat {
      *     resolved.
      * @throws IOException if writing to the output fails.
      */
-    public void appendTo(MessageOrBuilder message, Appendable output) throws IOException {
-      // TODO(xiaofeng): Investigate the allocation overhead and optimize for
-      // mobile.
+    public void appendTo(MessageOrBuilder message, JsonGenerator generator) throws IOException {
       new PrinterImpl(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          output,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys)
+              registry,
+              oldRegistry,
+              alwaysOutputDefaultValueFields,
+              includingDefaultValueFields,
+              preservingProtoFieldNames,
+              generator,
+              printingEnumsAsInts,
+              sortingMapKeys,
+              treatDefaultFieldsAsNull,
+              omitNullFields)
           .print(message);
-    }
-
-    /**
-     * Converts a protobuf message to JSON format. Throws exceptions if there
-     * are unknown Any types in the message.
-     */
-    public String print(MessageOrBuilder message) throws InvalidProtocolBufferException {
-      try {
-        StringBuilder builder = new StringBuilder();
-        appendTo(message, builder);
-        return builder.toString();
-      } catch (InvalidProtocolBufferException e) {
-        throw e;
-      } catch (IOException e) {
-        // Unexpected IOException.
-        throw new IllegalStateException(e);
-      }
     }
   }
 
-  /**
-   * Creates a {@link Parser} with default configuration.
-   */
+  /** Creates a {@link Parser} with default configuration. */
   public static Parser parser() {
     return new Parser(
         com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
@@ -401,9 +422,7 @@ public class JsonFormat {
         Parser.DEFAULT_RECURSION_LIMIT);
   }
 
-  /**
-   * A Parser parses JSON to protobuf message.
-   */
+  /** A Parser parses JSON to protobuf message. */
   public static class Parser {
     private final com.google.protobuf.TypeRegistry registry;
     private final TypeRegistry oldRegistry;
@@ -467,28 +486,13 @@ public class JsonFormat {
     /**
      * Parses from JSON into a protobuf message.
      *
-     * @throws InvalidProtocolBufferException if the input is not valid JSON
-     *         format or there are unknown fields in the input.
+     * @throws InvalidProtocolBufferException if the input is not valid JSON format or there are
+     *     unknown fields in the input.
      */
-    public void merge(String json, Message.Builder builder) throws InvalidProtocolBufferException {
-      // TODO(xiaofeng): Investigate the allocation overhead and optimize for
-      // mobile.
-      new ParserImpl(registry, oldRegistry, ignoringUnknownFields, recursionLimit)
-          .merge(json, builder);
-    }
-
-    /**
-     * Parses from JSON into a protobuf message.
-     *
-     * @throws InvalidProtocolBufferException if the input is not valid JSON
-     *         format or there are unknown fields in the input.
-     * @throws IOException if reading from the input throws.
-     */
-    public void merge(Reader json, Message.Builder builder) throws IOException {
-      // TODO(xiaofeng): Investigate the allocation overhead and optimize for
-      // mobile.
-      new ParserImpl(registry, oldRegistry, ignoringUnknownFields, recursionLimit)
-          .merge(json, builder);
+    public void merge(TreeNode treeNode, Message.Builder builder)
+        throws InvalidProtocolBufferException {
+      new ParserTreeImpl(registry, oldRegistry, ignoringUnknownFields, recursionLimit)
+          .merge(treeNode, builder);
     }
 
     // For testing only.
@@ -498,123 +502,8 @@ public class JsonFormat {
   }
 
   /**
-   * A TypeRegistry is used to resolve Any messages in the JSON conversion.
-   * You must provide a TypeRegistry containing all message types used in
-   * Any message fields, or the JSON conversion will fail because data
-   * in Any message fields is unrecognizable. You don't need to supply a
-   * TypeRegistry if you don't use Any message fields.
-   */
-  public static class TypeRegistry {
-    private static class EmptyTypeRegistryHolder {
-      private static final TypeRegistry EMPTY =
-          new TypeRegistry(Collections.<String, Descriptor>emptyMap());
-    }
-
-    public static TypeRegistry getEmptyTypeRegistry() {
-      return EmptyTypeRegistryHolder.EMPTY;
-    }
-
-    public static Builder newBuilder() {
-      return new Builder();
-    }
-
-    /**
-     * Find a type by its full name. Returns null if it cannot be found in this {@link
-     * TypeRegistry}.
-     */
-    @Nullable
-    public Descriptor find(String name) {
-      return types.get(name);
-    }
-
-    @Nullable
-    Descriptor getDescriptorForTypeUrl(String typeUrl) throws InvalidProtocolBufferException {
-      return find(getTypeName(typeUrl));
-    }
-
-    private final Map<String, Descriptor> types;
-
-    private TypeRegistry(Map<String, Descriptor> types) {
-      this.types = types;
-    }
-
-
-    /** A Builder is used to build {@link TypeRegistry}. */
-    public static class Builder {
-      private Builder() {}
-
-      /**
-       * Adds a message type and all types defined in the same .proto file as well as all
-       * transitively imported .proto files to this {@link Builder}.
-       */
-      @CanIgnoreReturnValue
-      public Builder add(Descriptor messageType) {
-        if (built) {
-          throw new IllegalStateException("A TypeRegistry.Builder can only be used once.");
-        }
-        addFile(messageType.getFile());
-        return this;
-      }
-
-      /**
-       * Adds message types and all types defined in the same .proto file as well as all
-       * transitively imported .proto files to this {@link Builder}.
-       */
-      @CanIgnoreReturnValue
-      public Builder add(Iterable<Descriptor> messageTypes) {
-        if (built) {
-          throw new IllegalStateException("A TypeRegistry.Builder can only be used once.");
-        }
-        for (Descriptor type : messageTypes) {
-          addFile(type.getFile());
-        }
-        return this;
-      }
-
-      /**
-       * Builds a {@link TypeRegistry}. This method can only be called once for
-       * one Builder.
-       */
-      public TypeRegistry build() {
-        built = true;
-        return new TypeRegistry(types);
-      }
-
-      private void addFile(FileDescriptor file) {
-        // Skip the file if it's already added.
-        if (!files.add(file.getFullName())) {
-          return;
-        }
-        for (FileDescriptor dependency : file.getDependencies()) {
-          addFile(dependency);
-        }
-        for (Descriptor message : file.getMessageTypes()) {
-          addMessage(message);
-        }
-      }
-
-      private void addMessage(Descriptor message) {
-        for (Descriptor nestedType : message.getNestedTypes()) {
-          addMessage(nestedType);
-        }
-
-        if (types.containsKey(message.getFullName())) {
-          logger.warning("Type " + message.getFullName() + " is added multiple times.");
-          return;
-        }
-
-        types.put(message.getFullName(), message);
-      }
-
-      private final Set<String> files = new HashSet<String>();
-      private Map<String, Descriptor> types = new HashMap<String, Descriptor>();
-      private boolean built = false;
-    }
-  }
-
-  /**
-   * An interface for json formatting that can be used in
-   * combination with the omittingInsignificantWhitespace() method
+   * An interface for json formatting that can be used in combination with the
+   * omittingInsignificantWhitespace() method
    */
   interface TextGenerator {
     void indent();
@@ -624,9 +513,7 @@ public class JsonFormat {
     void print(final CharSequence text) throws IOException;
   }
 
-  /**
-   * Format the json without indentation
-   */
+  /** Format the json without indentation */
   private static final class CompactTextGenerator implements TextGenerator {
     private final Appendable output;
 
@@ -648,69 +535,8 @@ public class JsonFormat {
       output.append(text);
     }
   }
-  /**
-   * A TextGenerator adds indentation when writing formatted text.
-   */
-  private static final class PrettyTextGenerator implements TextGenerator {
-    private final Appendable output;
-    private final StringBuilder indent = new StringBuilder();
-    private boolean atStartOfLine = true;
 
-    private PrettyTextGenerator(final Appendable output) {
-      this.output = output;
-    }
-
-    /**
-     * Indent text by two spaces. After calling Indent(), two spaces will be inserted at the
-     * beginning of each line of text. Indent() may be called multiple times to produce deeper
-     * indents.
-     */
-    @Override
-    public void indent() {
-      indent.append("  ");
-    }
-
-    /** Reduces the current indent level by two spaces, or crashes if the indent level is zero. */
-    @Override
-    public void outdent() {
-      final int length = indent.length();
-      if (length < 2) {
-        throw new IllegalArgumentException(" Outdent() without matching Indent().");
-      }
-      indent.delete(length - 2, length);
-    }
-
-    /** Print text to the output stream. */
-    @Override
-    public void print(final CharSequence text) throws IOException {
-      final int size = text.length();
-      int pos = 0;
-
-      for (int i = 0; i < size; i++) {
-        if (text.charAt(i) == '\n') {
-          write(text.subSequence(pos, i + 1));
-          pos = i + 1;
-          atStartOfLine = true;
-        }
-      }
-      write(text.subSequence(pos, size));
-    }
-
-    private void write(final CharSequence data) throws IOException {
-      if (data.length() == 0) {
-        return;
-      }
-      if (atStartOfLine) {
-        atStartOfLine = false;
-        output.append(indent);
-      }
-      output.append(data);
-    }
-  }
-
-  /**
-   * A Printer converts protobuf messages to JSON format.
-   */
+  /** A Printer converts protobuf messages to JSON format. */
   private static final class PrinterImpl {
     private final com.google.protobuf.TypeRegistry registry;
     private final TypeRegistry oldRegistry;
@@ -719,15 +545,9 @@ public class JsonFormat {
     private final boolean preservingProtoFieldNames;
     private final boolean printingEnumsAsInts;
     private final boolean sortingMapKeys;
-    private final TextGenerator generator;
-    // We use Gson to help handle string escapes.
-    private final Gson gson;
-    private final CharSequence blankOrSpace;
-    private final CharSequence blankOrNewLine;
-
-    private static class GsonHolder {
-      private static final Gson DEFAULT_GSON = new GsonBuilder().create();
-    }
+    private final boolean treatDefaultFieldsAsNull;
+    private final boolean omitNullFields;
+    private final JsonGenerator generator;
 
     PrinterImpl(
         com.google.protobuf.TypeRegistry registry,
@@ -735,10 +555,11 @@ public class JsonFormat {
         boolean alwaysOutputDefaultValueFields,
         Set<FieldDescriptor> includingDefaultValueFields,
         boolean preservingProtoFieldNames,
-        Appendable jsonOutput,
-        boolean omittingInsignificantWhitespace,
+        JsonGenerator jsonGenerator,
         boolean printingEnumsAsInts,
-        boolean sortingMapKeys) {
+        boolean sortingMapKeys,
+        boolean treatDefaultFieldsAsNull,
+        boolean omitNullFields) {
       this.registry = registry;
       this.oldRegistry = oldRegistry;
       this.alwaysOutputDefaultValueFields = alwaysOutputDefaultValueFields;
@@ -746,17 +567,9 @@ public class JsonFormat {
       this.preservingProtoFieldNames = preservingProtoFieldNames;
       this.printingEnumsAsInts = printingEnumsAsInts;
       this.sortingMapKeys = sortingMapKeys;
-      this.gson = GsonHolder.DEFAULT_GSON;
-      // json format related properties, determined by printerType
-      if (omittingInsignificantWhitespace) {
-        this.generator = new CompactTextGenerator(jsonOutput);
-        this.blankOrSpace = "";
-        this.blankOrNewLine = "";
-      } else {
-        this.generator = new PrettyTextGenerator(jsonOutput);
-        this.blankOrSpace = " ";
-        this.blankOrNewLine = "\n";
-      }
+      this.generator = jsonGenerator;
+      this.treatDefaultFieldsAsNull = treatDefaultFieldsAsNull;
+      this.omitNullFields = omitNullFields;
     }
 
     void print(MessageOrBuilder message) throws IOException {
@@ -864,7 +677,8 @@ public class JsonFormat {
     /** Prints google.protobuf.Any */
     private void printAny(MessageOrBuilder message) throws IOException {
       if (Any.getDefaultInstance().equals(message)) {
-        generator.print("{}");
+        generator.writeStartObject();
+        generator.writeEndObject();
         return;
       }
       Descriptor descriptor = message.getDescriptorForType();
@@ -881,7 +695,7 @@ public class JsonFormat {
       String typeUrl = (String) message.getField(typeUrlField);
       Descriptor type = registry.getDescriptorForTypeUrl(typeUrl);
       if (type == null) {
-        type = oldRegistry.getDescriptorForTypeUrl(typeUrl);
+        type = getDescriptorForTypeUrl(oldRegistry, typeUrl);
         if (type == null) {
           throw new InvalidProtocolBufferException("Cannot find type for url: " + typeUrl);
         }
@@ -893,14 +707,15 @@ public class JsonFormat {
       if (printer != null) {
         // If the type is one of the well-known types, we use a special
         // formatting.
-        generator.print("{" + blankOrNewLine);
-        generator.indent();
-        generator.print("\"@type\":" + blankOrSpace + gson.toJson(typeUrl) + "," + blankOrNewLine);
-        generator.print("\"value\":" + blankOrSpace);
+        generator.writeStartObject();
+        generator.writeFieldName("@type");
+        generator.writePOJO(typeUrl);
+
+        generator.writeObjectFieldStart("value");
         printer.print(this, contentMessage);
-        generator.print(blankOrNewLine);
-        generator.outdent();
-        generator.print("}");
+        generator.writeEndObject();
+
+        generator.writeEndObject();
       } else {
         // Print the content message instead (with a "@type" field added).
         print(contentMessage, typeUrl);
@@ -930,19 +745,19 @@ public class JsonFormat {
     /** Prints google.protobuf.Timestamp */
     private void printTimestamp(MessageOrBuilder message) throws IOException {
       Timestamp value = Timestamp.parseFrom(toByteString(message));
-      generator.print("\"" + Timestamps.toString(value) + "\"");
+      generator.writeString(Timestamps.toString(value));
     }
 
     /** Prints google.protobuf.Duration */
     private void printDuration(MessageOrBuilder message) throws IOException {
       Duration value = Duration.parseFrom(toByteString(message));
-      generator.print("\"" + Durations.toString(value) + "\"");
+      generator.writeString(Durations.toString(value));
     }
 
     /** Prints google.protobuf.FieldMask */
     private void printFieldMask(MessageOrBuilder message) throws IOException {
       FieldMask value = FieldMask.parseFrom(toByteString(message));
-      generator.print("\"" + FieldMaskUtil.toJsonString(value) + "\"");
+      generator.writeString(FieldMaskUtil.toJsonString(value));
     }
 
     /** Prints google.protobuf.Struct */
@@ -962,7 +777,7 @@ public class JsonFormat {
       Map<FieldDescriptor, Object> fields = message.getAllFields();
       if (fields.isEmpty()) {
         // No value set.
-        generator.print("null");
+        generator.writeNull();
         return;
       }
       // A Value message can only have at most one field set (it only contains
@@ -987,13 +802,11 @@ public class JsonFormat {
 
     /** Prints a regular message with an optional type URL. */
     private void print(MessageOrBuilder message, @Nullable String typeUrl) throws IOException {
-      generator.print("{" + blankOrNewLine);
-      generator.indent();
+      generator.writeStartObject();
 
-      boolean printedField = false;
       if (typeUrl != null) {
-        generator.print("\"@type\":" + blankOrSpace + gson.toJson(typeUrl));
-        printedField = true;
+        generator.writeFieldName("@type");
+        generator.writePOJO(typeUrl);
       }
       Map<FieldDescriptor, Object> fieldsToPrint = null;
       if (alwaysOutputDefaultValueFields || !includingDefaultValueFields.isEmpty()) {
@@ -1021,51 +834,45 @@ public class JsonFormat {
         fieldsToPrint = message.getAllFields();
       }
       for (Map.Entry<FieldDescriptor, Object> field : fieldsToPrint.entrySet()) {
-        if (printedField) {
-          // Add line-endings for the previous field.
-          generator.print("," + blankOrNewLine);
-        } else {
-          printedField = true;
-        }
-        printField(field.getKey(), field.getValue());
+        printField(message, field.getKey(), field.getValue());
       }
-
-      // Add line-endings for the last field.
-      if (printedField) {
-        generator.print(blankOrNewLine);
-      }
-      generator.outdent();
-      generator.print("}");
+      generator.writeEndObject();
     }
 
-    private void printField(FieldDescriptor field, Object value) throws IOException {
-      if (preservingProtoFieldNames) {
-        generator.print("\"" + field.getName() + "\":" + blankOrSpace);
-      } else {
-        generator.print("\"" + field.getJsonName() + "\":" + blankOrSpace);
-      }
+    private void printField(MessageOrBuilder message, FieldDescriptor field, Object value)
+        throws IOException {
       if (field.isMapField()) {
+        printFieldName(field);
         printMapFieldValue(field, value);
       } else if (field.isRepeated()) {
+        printFieldName(field);
         printRepeatedFieldValue(field, value);
+      } else if (!message.hasField(field) && treatDefaultFieldsAsNull) {
+        if (!omitNullFields) {
+          printFieldName(field);
+          printNullValue();
+        }
       } else {
+        printFieldName(field);
         printSingleFieldValue(field, value);
+      }
+    }
+
+    private void printFieldName(FieldDescriptor field) throws IOException {
+      if (preservingProtoFieldNames) {
+        generator.writeFieldName(field.getName());
+      } else {
+        generator.writeFieldName(field.getJsonName());
       }
     }
 
     @SuppressWarnings("rawtypes")
     private void printRepeatedFieldValue(FieldDescriptor field, Object value) throws IOException {
-      generator.print("[");
-      boolean printedElement = false;
+      generator.writeStartArray();
       for (Object element : (List) value) {
-        if (printedElement) {
-          generator.print("," + blankOrSpace);
-        } else {
-          printedElement = true;
-        }
         printSingleFieldValue(field, element);
       }
-      generator.print("]");
+      generator.writeEndArray();
     }
 
     @SuppressWarnings("rawtypes")
@@ -1076,22 +883,22 @@ public class JsonFormat {
       if (keyField == null || valueField == null) {
         throw new InvalidProtocolBufferException("Invalid map field.");
       }
-      generator.print("{" + blankOrNewLine);
-      generator.indent();
+      generator.writeStartObject();
 
       @SuppressWarnings("unchecked") // Object guaranteed to be a List for a map field.
       Collection<Object> elements = (List<Object>) value;
       if (sortingMapKeys && !elements.isEmpty()) {
         Comparator<Object> cmp = null;
         if (keyField.getType() == FieldDescriptor.Type.STRING) {
-          cmp = new Comparator<Object>() {
-            @Override
-            public int compare(final Object o1, final Object o2) {
-              ByteString s1 = ByteString.copyFromUtf8((String) o1);
-              ByteString s2 = ByteString.copyFromUtf8((String) o2);
-              return ByteString.unsignedLexicographicalComparator().compare(s1, s2);
-            }
-          };
+          cmp =
+              new Comparator<Object>() {
+                @Override
+                public int compare(final Object o1, final Object o2) {
+                  ByteString s1 = ByteString.copyFromUtf8((String) o1);
+                  ByteString s2 = ByteString.copyFromUtf8((String) o2);
+                  return ByteString.unsignedLexicographicalComparator().compare(s1, s2);
+                }
+              };
         }
         TreeMap<Object, Object> tm = new TreeMap<Object, Object>(cmp);
         for (Object element : elements) {
@@ -1102,37 +909,29 @@ public class JsonFormat {
         elements = tm.values();
       }
 
-      boolean printedElement = false;
       for (Object element : elements) {
         Message entry = (Message) element;
         Object entryKey = entry.getField(keyField);
         Object entryValue = entry.getField(valueField);
-        if (printedElement) {
-          generator.print("," + blankOrNewLine);
-        } else {
-          printedElement = true;
-        }
         // Key fields are always double-quoted.
         printSingleFieldValue(keyField, entryKey, true);
-        generator.print(":" + blankOrSpace);
         printSingleFieldValue(valueField, entryValue);
       }
-      if (printedElement) {
-        generator.print(blankOrNewLine);
-      }
-      generator.outdent();
-      generator.print("}");
+      generator.writeEndObject();
     }
 
     private void printSingleFieldValue(FieldDescriptor field, Object value) throws IOException {
       printSingleFieldValue(field, value, false);
     }
 
+    private void printNullValue() throws IOException {
+      generator.writeNull();
+    }
+
     /**
      * Prints a field's value in JSON format.
      *
-     * @param alwaysWithQuotes whether to always add double-quotes to primitive
-     *        types.
+     * @param alwaysWithQuotes whether to always add double-quotes to primitive types.
      */
     private void printSingleFieldValue(
         final FieldDescriptor field, final Object value, boolean alwaysWithQuotes)
@@ -1142,51 +941,42 @@ public class JsonFormat {
         case SINT32:
         case SFIXED32:
           if (alwaysWithQuotes) {
-            generator.print("\"");
-          }
-          generator.print(((Integer) value).toString());
-          if (alwaysWithQuotes) {
-            generator.print("\"");
+            generator.writeString(((Integer) value).toString());
+          } else {
+            generator.writeNumber(((Integer) value));
           }
           break;
 
         case INT64:
         case SINT64:
         case SFIXED64:
-          generator.print("\"" + ((Long) value).toString() + "\"");
+          generator.writeString(((Long) value).toString());
           break;
 
         case BOOL:
+          Boolean booleanValue = ((Boolean) value);
           if (alwaysWithQuotes) {
-            generator.print("\"");
-          }
-          if (((Boolean) value).booleanValue()) {
-            generator.print("true");
+            generator.writeString(booleanValue.toString());
           } else {
-            generator.print("false");
-          }
-          if (alwaysWithQuotes) {
-            generator.print("\"");
+            generator.writeBoolean(booleanValue);
           }
           break;
 
         case FLOAT:
           Float floatValue = (Float) value;
           if (floatValue.isNaN()) {
-            generator.print("\"NaN\"");
+            generator.writeString("NaN");
           } else if (floatValue.isInfinite()) {
             if (floatValue < 0) {
-              generator.print("\"-Infinity\"");
+              generator.writeString("\"-Infinity\"");
             } else {
-              generator.print("\"Infinity\"");
+              generator.writeString("\"Infinity\"");
             }
           } else {
             if (alwaysWithQuotes) {
-              generator.print("\"");
-            }
-            generator.print(floatValue.toString());
-            if (alwaysWithQuotes) {
-              generator.print("\"");
+              generator.writeString(floatValue.toString());
+            } else {
+              generator.writeNumber(floatValue);
             }
           }
           break;
@@ -1194,66 +984,60 @@ public class JsonFormat {
         case DOUBLE:
           Double doubleValue = (Double) value;
           if (doubleValue.isNaN()) {
-            generator.print("\"NaN\"");
+            generator.writeString("NaN");
           } else if (doubleValue.isInfinite()) {
             if (doubleValue < 0) {
-              generator.print("\"-Infinity\"");
+              generator.writeString("\"-Infinity\"");
             } else {
-              generator.print("\"Infinity\"");
+              generator.writeString("\"Infinity\"");
             }
           } else {
             if (alwaysWithQuotes) {
-              generator.print("\"");
-            }
-            generator.print(doubleValue.toString());
-            if (alwaysWithQuotes) {
-              generator.print("\"");
+              generator.writeString(doubleValue.toString());
+            } else {
+              generator.writeNumber(doubleValue);
             }
           }
           break;
 
         case UINT32:
         case FIXED32:
+          String unsignedString = unsignedToString((Integer) value);
           if (alwaysWithQuotes) {
-            generator.print("\"");
-          }
-          generator.print(unsignedToString((Integer) value));
-          if (alwaysWithQuotes) {
-            generator.print("\"");
+            generator.writeString(unsignedString);
+          } else {
+            generator.writeNumber(unsignedString);
           }
           break;
 
         case UINT64:
         case FIXED64:
-          generator.print("\"" + unsignedToString((Long) value) + "\"");
+          generator.writeString(unsignedToString((Long) value));
           break;
 
         case STRING:
-          generator.print(gson.toJson(value));
+          generator.writePOJO(value);
           break;
 
         case BYTES:
-          generator.print("\"");
-          generator.print(BaseEncoding.base64().encode(((ByteString) value).toByteArray()));
-          generator.print("\"");
+          generator.writeString(BaseEncoding.base64().encode(((ByteString) value).toByteArray()));
           break;
 
         case ENUM:
           // Special-case google.protobuf.NullValue (it's an Enum).
           if (field.getEnumType().getFullName().equals("google.protobuf.NullValue")) {
             // No matter what value it contains, we always print it as "null".
+
             if (alwaysWithQuotes) {
-              generator.print("\"");
-            }
-            generator.print("null");
-            if (alwaysWithQuotes) {
-              generator.print("\"");
+              generator.writeString("null");
+            } else {
+              generator.writeNull();
             }
           } else {
             if (printingEnumsAsInts || ((EnumValueDescriptor) value).getIndex() == -1) {
-              generator.print(String.valueOf(((EnumValueDescriptor) value).getNumber()));
+              generator.writeNumber(String.valueOf(((EnumValueDescriptor) value).getNumber()));
             } else {
-              generator.print("\"" + ((EnumValueDescriptor) value).getName() + "\"");
+              generator.writeString(((EnumValueDescriptor) value).getName());
             }
           }
           break;
@@ -1286,6 +1070,11 @@ public class JsonFormat {
     }
   }
 
+  private static Descriptor getDescriptorForTypeUrl(TypeRegistry oldRegistry, String typeUrl)
+      throws InvalidProtocolBufferException {
+    return oldRegistry.find(getTypeName(typeUrl));
+  }
+
   private static String getTypeName(String typeUrl) throws InvalidProtocolBufferException {
     String[] parts = typeUrl.split("/");
     if (parts.length == 1) {
@@ -1294,14 +1083,14 @@ public class JsonFormat {
     return parts[parts.length - 1];
   }
 
-  private static class ParserImpl {
+  public static class ParserTreeImpl {
     private final com.google.protobuf.TypeRegistry registry;
     private final TypeRegistry oldRegistry;
     private final boolean ignoringUnknownFields;
     private final int recursionLimit;
     private int currentDepth;
 
-    ParserImpl(
+    ParserTreeImpl(
         com.google.protobuf.TypeRegistry registry,
         TypeRegistry oldRegistry,
         boolean ignoreUnknownFields,
@@ -1313,43 +1102,8 @@ public class JsonFormat {
       this.currentDepth = 0;
     }
 
-    void merge(Reader json, Message.Builder builder) throws IOException {
-      try {
-        JsonReader reader = new JsonReader(json);
-        reader.setLenient(false);
-        merge(JsonParser.parseReader(reader), builder);
-      } catch (InvalidProtocolBufferException e) {
-        throw e;
-      } catch (JsonIOException e) {
-        // Unwrap IOException.
-        if (e.getCause() instanceof IOException) {
-          throw (IOException) e.getCause();
-        } else {
-          throw new InvalidProtocolBufferException(e.getMessage());
-        }
-      } catch (Exception e) {
-        // We convert all exceptions from JSON parsing to our own exceptions.
-        throw new InvalidProtocolBufferException(e.getMessage());
-      }
-    }
-
-    void merge(String json, Message.Builder builder) throws InvalidProtocolBufferException {
-      try {
-        JsonReader reader = new JsonReader(new StringReader(json));
-        reader.setLenient(false);
-        merge(JsonParser.parseReader(reader), builder);
-      } catch (InvalidProtocolBufferException e) {
-        throw e;
-      } catch (Exception e) {
-        // We convert all exceptions from JSON parsing to our own exceptions.
-        InvalidProtocolBufferException toThrow = new InvalidProtocolBufferException(e.getMessage());
-        toThrow.initCause(e);
-        throw toThrow;
-      }
-    }
-
     private interface WellKnownTypeParser {
-      void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+      void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
           throws InvalidProtocolBufferException;
     }
 
@@ -1363,7 +1117,7 @@ public class JsonFormat {
           Any.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeAny(json, builder);
             }
@@ -1372,7 +1126,7 @@ public class JsonFormat {
       WellKnownTypeParser wrappersPrinter =
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeWrapper(json, builder);
             }
@@ -1391,7 +1145,7 @@ public class JsonFormat {
           Timestamp.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeTimestamp(json, builder);
             }
@@ -1401,7 +1155,7 @@ public class JsonFormat {
           Duration.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeDuration(json, builder);
             }
@@ -1411,7 +1165,7 @@ public class JsonFormat {
           FieldMask.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeFieldMask(json, builder);
             }
@@ -1421,7 +1175,7 @@ public class JsonFormat {
           Struct.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeStruct(json, builder);
             }
@@ -1431,7 +1185,7 @@ public class JsonFormat {
           ListValue.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeListValue(json, builder);
             }
@@ -1441,7 +1195,7 @@ public class JsonFormat {
           Value.getDescriptor().getFullName(),
           new WellKnownTypeParser() {
             @Override
-            public void merge(ParserImpl parser, JsonElement json, Message.Builder builder)
+            public void merge(ParserTreeImpl parser, TreeNode json, Message.Builder builder)
                 throws InvalidProtocolBufferException {
               parser.mergeValue(json, builder);
             }
@@ -1449,15 +1203,15 @@ public class JsonFormat {
       return parsers;
     }
 
-    private void merge(JsonElement json, Message.Builder builder)
+    public void merge(TreeNode treeNode, Message.Builder builder)
         throws InvalidProtocolBufferException {
       WellKnownTypeParser specialParser =
           wellKnownTypeParsers.get(builder.getDescriptorForType().getFullName());
       if (specialParser != null) {
-        specialParser.merge(this, json, builder);
+        specialParser.merge(this, treeNode, builder);
         return;
       }
-      mergeMessage(json, builder, false);
+      mergeMessage(treeNode, builder, false);
     }
 
     // Maps from camel-case field names to FieldDescriptor.
@@ -1477,33 +1231,38 @@ public class JsonFormat {
       return fieldNameMaps.get(descriptor);
     }
 
-    private void mergeMessage(JsonElement json, Message.Builder builder, boolean skipTypeUrl)
+    private void mergeMessage(TreeNode json, Message.Builder builder, boolean skipTypeUrl)
         throws InvalidProtocolBufferException {
-      if (!(json instanceof JsonObject)) {
+      if (!(json instanceof ObjectNode)) {
         throw new InvalidProtocolBufferException("Expect message object but got: " + json);
       }
-      JsonObject object = (JsonObject) json;
+      ObjectNode object = (ObjectNode) json;
       Map<String, FieldDescriptor> fieldNameMap = getFieldNameMap(builder.getDescriptorForType());
-      for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
-        if (skipTypeUrl && entry.getKey().equals("@type")) {
+
+      var iterator = object.fields();
+      while (iterator.hasNext()) {
+        Map.Entry<String, JsonNode> entry = iterator.next();
+        String key = entry.getKey();
+        JsonNode value = entry.getValue();
+        if (skipTypeUrl && key.equals("@type")) {
           continue;
         }
-        FieldDescriptor field = fieldNameMap.get(entry.getKey());
+        FieldDescriptor field = fieldNameMap.get(key);
         if (field == null) {
           if (ignoringUnknownFields) {
             continue;
           }
           throw new InvalidProtocolBufferException(
               "Cannot find field: "
-                  + entry.getKey()
+                  + key
                   + " in message "
                   + builder.getDescriptorForType().getFullName());
         }
-        mergeField(field, entry.getValue(), builder);
+        mergeField(field, value, builder);
       }
     }
 
-    private void mergeAny(JsonElement json, Message.Builder builder)
+    private void mergeAny(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Descriptor descriptor = builder.getDescriptorForType();
       FieldDescriptor typeUrlField = descriptor.findFieldByName("type_url");
@@ -1517,21 +1276,21 @@ public class JsonFormat {
         throw new InvalidProtocolBufferException("Invalid Any type.");
       }
 
-      if (!(json instanceof JsonObject)) {
+      if (!(json instanceof ObjectNode)) {
         throw new InvalidProtocolBufferException("Expect message object but got: " + json);
       }
-      JsonObject object = (JsonObject) json;
-      if (object.entrySet().isEmpty()) {
+      ObjectNode object = (ObjectNode) json;
+      if (object.isEmpty()) {
         return; // builder never modified, so it will end up building the default instance of Any
       }
-      JsonElement typeUrlElement = object.get("@type");
+      JsonNode typeUrlElement = object.get("@type");
       if (typeUrlElement == null) {
         throw new InvalidProtocolBufferException("Missing type url when parsing: " + json);
       }
-      String typeUrl = typeUrlElement.getAsString();
+      String typeUrl = typeUrlElement.asText();
       Descriptor contentType = registry.getDescriptorForTypeUrl(typeUrl);
       if (contentType == null) {
-        contentType = oldRegistry.getDescriptorForTypeUrl(typeUrl);
+        contentType = getDescriptorForTypeUrl(oldRegistry, typeUrl);
         if (contentType == null) {
           throw new InvalidProtocolBufferException("Cannot resolve type: " + typeUrl);
         }
@@ -1541,7 +1300,7 @@ public class JsonFormat {
           DynamicMessage.getDefaultInstance(contentType).newBuilderForType();
       WellKnownTypeParser specialParser = wellKnownTypeParsers.get(contentType.getFullName());
       if (specialParser != null) {
-        JsonElement value = object.get("value");
+        JsonNode value = object.get("value");
         if (value != null) {
           specialParser.merge(this, value, contentBuilder);
         }
@@ -1551,33 +1310,33 @@ public class JsonFormat {
       builder.setField(valueField, contentBuilder.build().toByteString());
     }
 
-    private void mergeFieldMask(JsonElement json, Message.Builder builder)
+    private void mergeFieldMask(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
-      FieldMask value = FieldMaskUtil.fromJsonString(json.getAsString());
+      FieldMask value = FieldMaskUtil.fromJsonString(((JsonNode) json).asText());
       builder.mergeFrom(value.toByteString());
     }
 
-    private void mergeTimestamp(JsonElement json, Message.Builder builder)
+    private void mergeTimestamp(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       try {
-        Timestamp value = Timestamps.parse(json.getAsString());
+        Timestamp value = Timestamps.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
         throw new InvalidProtocolBufferException("Failed to parse timestamp: " + json);
       }
     }
 
-    private void mergeDuration(JsonElement json, Message.Builder builder)
+    private void mergeDuration(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       try {
-        Duration value = Durations.parse(json.getAsString());
+        Duration value = Durations.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
         throw new InvalidProtocolBufferException("Failed to parse duration: " + json);
       }
     }
 
-    private void mergeStruct(JsonElement json, Message.Builder builder)
+    private void mergeStruct(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Descriptor descriptor = builder.getDescriptorForType();
       FieldDescriptor field = descriptor.findFieldByName("fields");
@@ -1587,7 +1346,7 @@ public class JsonFormat {
       mergeMapField(field, json, builder);
     }
 
-    private void mergeListValue(JsonElement json, Message.Builder builder)
+    private void mergeListValue(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Descriptor descriptor = builder.getDescriptorForType();
       FieldDescriptor field = descriptor.findFieldByName("values");
@@ -1597,37 +1356,37 @@ public class JsonFormat {
       mergeRepeatedField(field, json, builder);
     }
 
-    private void mergeValue(JsonElement json, Message.Builder builder)
+    private void mergeValue(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Descriptor type = builder.getDescriptorForType();
-      if (json instanceof JsonPrimitive) {
-        JsonPrimitive primitive = (JsonPrimitive) json;
+      if (json instanceof ValueNode) {
+        ValueNode primitive = (ValueNode) json;
         if (primitive.isBoolean()) {
-          builder.setField(type.findFieldByName("bool_value"), primitive.getAsBoolean());
+          builder.setField(type.findFieldByName("bool_value"), primitive.asBoolean());
         } else if (primitive.isNumber()) {
-          builder.setField(type.findFieldByName("number_value"), primitive.getAsDouble());
+          builder.setField(type.findFieldByName("number_value"), primitive.asDouble());
+        } else if (primitive.isNull()) {
+          builder.setField(
+              type.findFieldByName("null_value"), NullValue.NULL_VALUE.getValueDescriptor());
         } else {
-          builder.setField(type.findFieldByName("string_value"), primitive.getAsString());
+          builder.setField(type.findFieldByName("string_value"), primitive.asText());
         }
-      } else if (json instanceof JsonObject) {
+      } else if (json instanceof ObjectNode) {
         FieldDescriptor field = type.findFieldByName("struct_value");
         Message.Builder structBuilder = builder.newBuilderForField(field);
         merge(json, structBuilder);
         builder.setField(field, structBuilder.build());
-      } else if (json instanceof JsonArray) {
+      } else if (json instanceof ArrayNode) {
         FieldDescriptor field = type.findFieldByName("list_value");
         Message.Builder listBuilder = builder.newBuilderForField(field);
         merge(json, listBuilder);
         builder.setField(field, listBuilder.build());
-      } else if (json instanceof JsonNull) {
-        builder.setField(
-            type.findFieldByName("null_value"), NullValue.NULL_VALUE.getValueDescriptor());
       } else {
         throw new IllegalStateException("Unexpected json data: " + json);
       }
     }
 
-    private void mergeWrapper(JsonElement json, Message.Builder builder)
+    private void mergeWrapper(TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Descriptor type = builder.getDescriptorForType();
       FieldDescriptor field = type.findFieldByName("value");
@@ -1637,7 +1396,7 @@ public class JsonFormat {
       builder.setField(field, parseFieldValue(field, json, builder));
     }
 
-    private void mergeField(FieldDescriptor field, JsonElement json, Message.Builder builder)
+    private void mergeField(FieldDescriptor field, TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       if (field.isRepeated()) {
         if (builder.getRepeatedFieldCount(field) > 0) {
@@ -1650,7 +1409,7 @@ public class JsonFormat {
               "Field " + field.getFullName() + " has already been set.");
         }
       }
-      if (field.isRepeated() && json instanceof JsonNull) {
+      if (field.isRepeated() && json instanceof NullNode) {
         // We allow "null" as value for all field types and treat it as if the
         // field is not present.
         return;
@@ -1670,9 +1429,9 @@ public class JsonFormat {
       }
     }
 
-    private void mergeMapField(FieldDescriptor field, JsonElement json, Message.Builder builder)
+    private void mergeMapField(FieldDescriptor field, TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
-      if (!(json instanceof JsonObject)) {
+      if (!(json instanceof ObjectNode)) {
         throw new InvalidProtocolBufferException("Expect a map object but found: " + json);
       }
       Descriptor type = field.getMessageType();
@@ -1681,10 +1440,12 @@ public class JsonFormat {
       if (keyField == null || valueField == null) {
         throw new InvalidProtocolBufferException("Invalid map field: " + field.getFullName());
       }
-      JsonObject object = (JsonObject) json;
-      for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+      ObjectNode object = (ObjectNode) json;
+      Iterator<Map.Entry<String, JsonNode>> iterator = object.fields();
+      while (iterator.hasNext()) {
+        Map.Entry<String, JsonNode> entry = iterator.next();
         Message.Builder entryBuilder = builder.newBuilderForField(field);
-        Object key = parseFieldValue(keyField, new JsonPrimitive(entry.getKey()), entryBuilder);
+        Object key = parseFieldValue(keyField, TextNode.valueOf(entry.getKey()), entryBuilder);
         Object value = parseFieldValue(valueField, entry.getValue(), entryBuilder);
         if (value == null) {
           if (ignoringUnknownFields && valueField.getType() == Type.ENUM) {
@@ -1699,7 +1460,7 @@ public class JsonFormat {
       }
     }
 
-    private void mergeOneofField(FieldDescriptor field, JsonElement json, Message.Builder builder)
+    private void mergeOneofField(FieldDescriptor field, TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
       Object value = parseFieldValue(field, json, builder);
       if (value == null) {
@@ -1717,13 +1478,12 @@ public class JsonFormat {
       builder.setField(field, value);
     }
 
-    private void mergeRepeatedField(
-        FieldDescriptor field, JsonElement json, Message.Builder builder)
+    private void mergeRepeatedField(FieldDescriptor field, TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
-      if (!(json instanceof JsonArray)) {
+      if (!(json instanceof ArrayNode)) {
         throw new InvalidProtocolBufferException("Expect an array but found: " + json);
       }
-      JsonArray array = (JsonArray) json;
+      ArrayNode array = (ArrayNode) json;
       for (int i = 0; i < array.size(); ++i) {
         Object value = parseFieldValue(field, array.get(i), builder);
         if (value == null) {
@@ -1738,9 +1498,9 @@ public class JsonFormat {
       }
     }
 
-    private int parseInt32(JsonElement json) throws InvalidProtocolBufferException {
+    private int parseInt32(JsonNode json) throws InvalidProtocolBufferException {
       try {
-        return Integer.parseInt(json.getAsString());
+        return Integer.parseInt(json.asText());
       } catch (Exception e) {
         // Fall through.
       }
@@ -1748,16 +1508,16 @@ public class JsonFormat {
       // "1.000" are treated as equal in JSON. For this reason we accept floating point values for
       // integer fields as well as long as it actually is an integer (i.e., round(value) == value).
       try {
-        BigDecimal value = new BigDecimal(json.getAsString());
+        BigDecimal value = new BigDecimal(json.asText());
         return value.intValueExact();
       } catch (Exception e) {
         throw new InvalidProtocolBufferException("Not an int32 value: " + json);
       }
     }
 
-    private long parseInt64(JsonElement json) throws InvalidProtocolBufferException {
+    private long parseInt64(JsonNode json) throws InvalidProtocolBufferException {
       try {
-        return Long.parseLong(json.getAsString());
+        return Long.parseLong(json.asText());
       } catch (Exception e) {
         // Fall through.
       }
@@ -1765,16 +1525,16 @@ public class JsonFormat {
       // "1.000" are treated as equal in JSON. For this reason we accept floating point values for
       // integer fields as well as long as it actually is an integer (i.e., round(value) == value).
       try {
-        BigDecimal value = new BigDecimal(json.getAsString());
+        BigDecimal value = new BigDecimal(json.asText());
         return value.longValueExact();
       } catch (Exception e) {
         throw new InvalidProtocolBufferException("Not an int64 value: " + json);
       }
     }
 
-    private int parseUint32(JsonElement json) throws InvalidProtocolBufferException {
+    private int parseUint32(JsonNode json) throws InvalidProtocolBufferException {
       try {
-        long result = Long.parseLong(json.getAsString());
+        long result = Long.parseLong(json.asText());
         if (result < 0 || result > 0xFFFFFFFFL) {
           throw new InvalidProtocolBufferException("Out of range uint32 value: " + json);
         }
@@ -1788,7 +1548,7 @@ public class JsonFormat {
       // "1.000" are treated as equal in JSON. For this reason we accept floating point values for
       // integer fields as well as long as it actually is an integer (i.e., round(value) == value).
       try {
-        BigDecimal decimalValue = new BigDecimal(json.getAsString());
+        BigDecimal decimalValue = new BigDecimal(json.asText());
         BigInteger value = decimalValue.toBigIntegerExact();
         if (value.signum() < 0 || value.compareTo(new BigInteger("FFFFFFFF", 16)) > 0) {
           throw new InvalidProtocolBufferException("Out of range uint32 value: " + json);
@@ -1803,9 +1563,9 @@ public class JsonFormat {
 
     private static final BigInteger MAX_UINT64 = new BigInteger("FFFFFFFFFFFFFFFF", 16);
 
-    private long parseUint64(JsonElement json) throws InvalidProtocolBufferException {
+    private long parseUint64(JsonNode json) throws InvalidProtocolBufferException {
       try {
-        BigDecimal decimalValue = new BigDecimal(json.getAsString());
+        BigDecimal decimalValue = new BigDecimal(json.asText());
         BigInteger value = decimalValue.toBigIntegerExact();
         if (value.compareTo(BigInteger.ZERO) < 0 || value.compareTo(MAX_UINT64) > 0) {
           throw new InvalidProtocolBufferException("Out of range uint64 value: " + json);
@@ -1818,11 +1578,11 @@ public class JsonFormat {
       }
     }
 
-    private boolean parseBool(JsonElement json) throws InvalidProtocolBufferException {
-      if (json.getAsString().equals("true")) {
+    private boolean parseBool(JsonNode json) throws InvalidProtocolBufferException {
+      if (json.asText().equals("true")) {
         return true;
       }
-      if (json.getAsString().equals("false")) {
+      if (json.asText().equals("false")) {
         return false;
       }
       throw new InvalidProtocolBufferException("Invalid bool value: " + json);
@@ -1830,19 +1590,19 @@ public class JsonFormat {
 
     private static final double EPSILON = 1e-6;
 
-    private float parseFloat(JsonElement json) throws InvalidProtocolBufferException {
-      if (json.getAsString().equals("NaN")) {
+    private float parseFloat(JsonNode json) throws InvalidProtocolBufferException {
+      if (json.asText().equals("NaN")) {
         return Float.NaN;
-      } else if (json.getAsString().equals("Infinity")) {
+      } else if (json.asText().equals("Infinity")) {
         return Float.POSITIVE_INFINITY;
-      } else if (json.getAsString().equals("-Infinity")) {
+      } else if (json.asText().equals("-Infinity")) {
         return Float.NEGATIVE_INFINITY;
       }
       try {
         // We don't use Float.parseFloat() here because that function simply
         // accepts all double values. Here we parse the value into a Double
         // and do explicit range check on it.
-        double value = Double.parseDouble(json.getAsString());
+        double value = Double.parseDouble(json.asText());
         // When a float value is printed, the printed value might be a little
         // larger or smaller due to precision loss. Here we need to add a bit
         // of tolerance when checking whether the float value is in range.
@@ -1867,19 +1627,19 @@ public class JsonFormat {
     private static final BigDecimal MIN_DOUBLE =
         new BigDecimal(String.valueOf(-Double.MAX_VALUE)).multiply(MORE_THAN_ONE);
 
-    private double parseDouble(JsonElement json) throws InvalidProtocolBufferException {
-      if (json.getAsString().equals("NaN")) {
+    private double parseDouble(JsonNode json) throws InvalidProtocolBufferException {
+      if (json.asText().equals("NaN")) {
         return Double.NaN;
-      } else if (json.getAsString().equals("Infinity")) {
+      } else if (json.asText().equals("Infinity")) {
         return Double.POSITIVE_INFINITY;
-      } else if (json.getAsString().equals("-Infinity")) {
+      } else if (json.asText().equals("-Infinity")) {
         return Double.NEGATIVE_INFINITY;
       }
       try {
         // We don't use Double.parseDouble() here because that function simply
         // accepts all values. Here we parse the value into a BigDecimal and do
         // explicit range check on it.
-        BigDecimal value = new BigDecimal(json.getAsString());
+        BigDecimal value = new BigDecimal(json.asText());
         if (value.compareTo(MAX_DOUBLE) > 0 || value.compareTo(MIN_DOUBLE) < 0) {
           throw new InvalidProtocolBufferException("Out of range double value: " + json);
         }
@@ -1891,22 +1651,22 @@ public class JsonFormat {
       }
     }
 
-    private String parseString(JsonElement json) {
-      return json.getAsString();
+    private String parseString(JsonNode json) {
+      return json.asText();
     }
 
-    private ByteString parseBytes(JsonElement json) throws InvalidProtocolBufferException {
+    private ByteString parseBytes(JsonNode json) throws InvalidProtocolBufferException {
       try {
-        return ByteString.copyFrom(BaseEncoding.base64().decode(json.getAsString()));
+        return ByteString.copyFrom(BaseEncoding.base64().decode(json.asText()));
       } catch (IllegalArgumentException e) {
-        return ByteString.copyFrom(BaseEncoding.base64Url().decode(json.getAsString()));
+        return ByteString.copyFrom(BaseEncoding.base64Url().decode(json.asText()));
       }
     }
 
     @Nullable
-    private EnumValueDescriptor parseEnum(EnumDescriptor enumDescriptor, JsonElement json)
+    private EnumValueDescriptor parseEnum(EnumDescriptor enumDescriptor, JsonNode json)
         throws InvalidProtocolBufferException {
-      String value = json.getAsString();
+      String value = json.asText();
       EnumValueDescriptor result = enumDescriptor.findValueByName(value);
       if (result == null) {
         // Try to interpret the value as a number.
@@ -1932,9 +1692,9 @@ public class JsonFormat {
     }
 
     @Nullable
-    private Object parseFieldValue(FieldDescriptor field, JsonElement json, Message.Builder builder)
+    private Object parseFieldValue(FieldDescriptor field, TreeNode json, Message.Builder builder)
         throws InvalidProtocolBufferException {
-      if (json instanceof JsonNull) {
+      if (json instanceof NullNode) {
         if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
             && field.getMessageType().getFullName().equals(Value.getDescriptor().getFullName())) {
           // For every other type, "null" means absence, but for the special
@@ -1947,7 +1707,7 @@ public class JsonFormat {
           return field.getEnumType().findValueByNumber(0);
         }
         return null;
-      } else if (json instanceof JsonObject) {
+      } else if (json instanceof ObjectNode) {
         if (field.getType() != FieldDescriptor.Type.MESSAGE
             && field.getType() != FieldDescriptor.Type.GROUP) {
           // If the field type is primitive, but the json type is JsonObject rather than
@@ -1960,38 +1720,38 @@ public class JsonFormat {
         case INT32:
         case SINT32:
         case SFIXED32:
-          return parseInt32(json);
+          return parseInt32((JsonNode) json);
 
         case INT64:
         case SINT64:
         case SFIXED64:
-          return parseInt64(json);
+          return parseInt64((JsonNode) json);
 
         case BOOL:
-          return parseBool(json);
+          return parseBool((JsonNode) json);
 
         case FLOAT:
-          return parseFloat(json);
+          return parseFloat((JsonNode) json);
 
         case DOUBLE:
-          return parseDouble(json);
+          return parseDouble((JsonNode) json);
 
         case UINT32:
         case FIXED32:
-          return parseUint32(json);
+          return parseUint32((JsonNode) json);
 
         case UINT64:
         case FIXED64:
-          return parseUint64(json);
+          return parseUint64((JsonNode) json);
 
         case STRING:
-          return parseString(json);
+          return parseString((JsonNode) json);
 
         case BYTES:
-          return parseBytes(json);
+          return parseBytes((JsonNode) json);
 
         case ENUM:
-          return parseEnum(field.getEnumType(), json);
+          return parseEnum(field.getEnumType(), (JsonNode) json);
 
         case MESSAGE:
         case GROUP:
