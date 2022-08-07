@@ -7,7 +7,7 @@ repositories {
 }
 
 dependencies {
-  val protobufVersion = "3.19.1"
+  val protobufVersion = "3.21.4"
   val guavaVersion = "31.0.1-jre"
   implementation("com.google.protobuf:protobuf-java:$protobufVersion")
   implementation("com.google.guava:guava:$guavaVersion")
