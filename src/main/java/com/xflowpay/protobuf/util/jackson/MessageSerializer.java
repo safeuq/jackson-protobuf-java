@@ -12,7 +12,7 @@ import com.google.protobuf.util.JsonFormat;
 import java.io.IOException;
 
 /**
- * @author safeuq-xflowpay
+ * @author Safeuq Mohamed
  */
 public class MessageSerializer extends StdSerializer<MessageOrBuilder> {
   private final boolean treatDefaultFieldsAsIs;
@@ -56,24 +56,24 @@ public class MessageSerializer extends StdSerializer<MessageOrBuilder> {
           break;
       }
       if (preservingProtoFieldNames) {
-        printerBuilder = printerBuilder.preservingProtoFieldNames();
+        printerBuilder.preservingProtoFieldNames();
       }
       if (includingDefaultValueFields) {
-        printerBuilder = printerBuilder.includingDefaultValueFields();
+        printerBuilder.includingDefaultValueFields();
       }
       if (!treatDefaultFieldsAsIs) {
-        printerBuilder = printerBuilder.treatDefaultFieldsAsNull();
+        printerBuilder.treatDefaultFieldsAsNull();
       }
       if (omitNullFields) {
-        printerBuilder = printerBuilder.omitNullFields();
+        printerBuilder.omitNullFields();
       }
       if (registry != null) {
-        printerBuilder = printerBuilder.usingTypeRegistry(registry);
+        printerBuilder.usingTypeRegistry(registry);
       }
       if (oldRegistry != null) {
-        printerBuilder = printerBuilder.usingTypeRegistry(oldRegistry);
+        printerBuilder.usingTypeRegistry(oldRegistry);
       }
-      printerBuilder.appendTo(message, generator);
+      printerBuilder.build().appendTo(message, generator);
     } catch (InvalidProtocolBufferException exception) {
       throw new JsonMappingException(null, exception.getMessage(), exception);
     }

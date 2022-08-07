@@ -66,12 +66,13 @@ import com.google.protobuf.NullValue;
 import com.google.protobuf.StringValue;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.UInt32Value;
 import com.google.protobuf.UInt64Value;
 import com.google.protobuf.Value;
 import com.google.protobuf.util.Durations;
 import com.google.protobuf.util.FieldMaskUtil;
-import com.google.protobuf.util.JsonFormat.TypeRegistry;
+import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -88,40 +89,31 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.logging.Logger;
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
  * Utility class to convert protobuf messages to/from the <a href=
- * 'https://developers.google.com/protocol-buffers/docs/proto3#json'>Proto3 JSON format.</a>
- * Only proto3 features are supported. Proto2 only features such as extensions and unknown fields
- * are discarded in the conversion. That is, when converting proto2 messages to JSON format,
- * extensions and unknown fields are treated as if they do not exist. This applies to proto2
- * messages embedded in proto3 messages as well.
+ * "https://developers.google.com/protocol-buffers/docs/proto3#json">Proto3 JSON format.</a> Only
+ * proto3 features are supported. Proto2 only features such as extensions and unknown fields are
+ * discarded in the conversion. That is, when converting proto2 messages to JSON format, extensions
+ * and unknown fields are treated as if they do not exist. This applies to proto2 messages embedded
+ * in proto3 messages as well.
  */
 public class JacksonFormat {
   private static final Logger logger = Logger.getLogger(JacksonFormat.class.getName());
 
   private JacksonFormat() {}
 
-  /** Creates a {@link PrinterBuilder} with default configurations. */
+  /** Creates a {@link Printer} with default configurations. */
   public static PrinterBuilder printerBuilder() {
-    return new PrinterBuilder(
-        com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
-        TypeRegistry.getEmptyTypeRegistry(),
-        /* alwaysOutputDefaultValueFields */ false,
-        /* includingDefaultValueFields */ Collections.<FieldDescriptor>emptySet(),
-        /* preservingProtoFieldNames */ false,
-        /* omittingInsignificantWhitespace */ false,
-        /* printingEnumsAsInts */ false,
-        /* sortingMapKeys */ false,
-        /* retainUnsetFieldsAsNull */ false,
-        /* omitNullFields */ false);
+    return new PrinterBuilder();
   }
 
   /** A Printer converts a protobuf message to the proto3 JSON format. */
-  public static class PrinterBuilder {
-    private final com.google.protobuf.TypeRegistry registry;
-    private final TypeRegistry oldRegistry;
+  public static class Printer {
+    private final TypeRegistry registry;
+    private final JsonFormat.TypeRegistry oldRegistry;
     // NOTE: There are 3 states for these *defaultValueFields variables:
     // 1) Default - alwaysOutput is false & including is empty set. Fields only output if they are
     //    set to non-default values.
@@ -130,22 +122,20 @@ public class JacksonFormat {
     // 3) includingDefaultValueFields(Set<FieldDescriptor>) called - alwaysOutput is false &
     //    including is set to the specified set. Fields in that set are always output & fields not
     //    in that set are only output if set to non-default values.
-    private boolean alwaysOutputDefaultValueFields;
-    private Set<FieldDescriptor> includingDefaultValueFields;
+    private final boolean alwaysOutputDefaultValueFields;
+    private final Set<FieldDescriptor> includingDefaultValueFields;
     private final boolean preservingProtoFieldNames;
-    private final boolean omittingInsignificantWhitespace;
     private final boolean printingEnumsAsInts;
     private final boolean sortingMapKeys;
     private final boolean treatDefaultFieldsAsNull;
     private final boolean omitNullFields;
 
-    private PrinterBuilder(
-        com.google.protobuf.TypeRegistry registry,
-        TypeRegistry oldRegistry,
+    private Printer(
+        TypeRegistry registry,
+        JsonFormat.TypeRegistry oldRegistry,
         boolean alwaysOutputDefaultValueFields,
         Set<FieldDescriptor> includingDefaultValueFields,
         boolean preservingProtoFieldNames,
-        boolean omittingInsignificantWhitespace,
         boolean printingEnumsAsInts,
         boolean sortingMapKeys,
         boolean treatDefaultFieldsAsNull,
@@ -155,239 +145,10 @@ public class JacksonFormat {
       this.alwaysOutputDefaultValueFields = alwaysOutputDefaultValueFields;
       this.includingDefaultValueFields = includingDefaultValueFields;
       this.preservingProtoFieldNames = preservingProtoFieldNames;
-      this.omittingInsignificantWhitespace = omittingInsignificantWhitespace;
       this.printingEnumsAsInts = printingEnumsAsInts;
       this.sortingMapKeys = sortingMapKeys;
       this.treatDefaultFieldsAsNull = treatDefaultFieldsAsNull;
       this.omitNullFields = omitNullFields;
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} using the given registry. The new Printer clones all other
-     * configurations from the current {@link PrinterBuilder}.
-     *
-     * @throws IllegalArgumentException if a registry is already set
-     */
-    public PrinterBuilder usingTypeRegistry(TypeRegistry oldRegistry) {
-      if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
-          || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
-        throw new IllegalArgumentException("Only one registry is allowed.");
-      }
-      return new PrinterBuilder(
-          com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} using the given registry. The new Printer clones all other
-     * configurations from the current {@link PrinterBuilder}.
-     *
-     * @throws IllegalArgumentException if a registry is already set
-     */
-    public PrinterBuilder usingTypeRegistry(com.google.protobuf.TypeRegistry registry) {
-      if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
-          || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
-        throw new IllegalArgumentException("Only one registry is allowed.");
-      }
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} that will also print fields set to their defaults. Empty
-     * repeated fields and map fields will be printed as well. The new Printer clones all other
-     * configurations from the current {@link PrinterBuilder}.
-     */
-    public PrinterBuilder includingDefaultValueFields() {
-      checkUnsetIncludingDefaultValueFields();
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          true,
-          Collections.emptySet(),
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} that prints enum field values as integers instead of as
-     * string. The new Printer clones all other configurations from the current {@link PrinterBuilder}.
-     */
-    public PrinterBuilder printingEnumsAsInts() {
-      checkUnsetPrintingEnumsAsInts();
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          true,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    private void checkUnsetPrintingEnumsAsInts() {
-      if (printingEnumsAsInts) {
-        throw new IllegalStateException("JsonFormat printingEnumsAsInts has already been set.");
-      }
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} that will also print default-valued fields if their
-     * FieldDescriptors are found in the supplied set. Empty repeated fields and map fields will be
-     * printed as well, if they match. The new Printer clones all other configurations from the
-     * current {@link PrinterBuilder}. Call includingDefaultValueFields() with no args to unconditionally
-     * output all fields.
-     */
-    public PrinterBuilder includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
-      Preconditions.checkArgument(
-          null != fieldsToAlwaysOutput && !fieldsToAlwaysOutput.isEmpty(),
-          "Non-empty Set must be supplied for includingDefaultValueFields.");
-
-      checkUnsetIncludingDefaultValueFields();
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          false,
-          Collections.unmodifiableSet(new HashSet<>(fieldsToAlwaysOutput)),
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    private void checkUnsetIncludingDefaultValueFields() {
-      if (alwaysOutputDefaultValueFields || !includingDefaultValueFields.isEmpty()) {
-        throw new IllegalStateException(
-            "JsonFormat includingDefaultValueFields has already been set.");
-      }
-    }
-
-    /**
-     * Creates a new {@link PrinterBuilder} that is configured to use the original proto field names as
-     * defined in the .proto file rather than converting them to lowerCamelCase. The new Printer
-     * clones all other configurations from the current {@link PrinterBuilder}.
-     */
-    public PrinterBuilder preservingProtoFieldNames() {
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          true,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    /**
-     * Create a new {@link PrinterBuilder} that omits insignificant whitespace in the JSON output.
-     * This new Printer clones all other configurations from the current Printer. Insignificant
-     * whitespace is defined by the JSON spec as whitespace that appears between JSON structural
-     * elements:
-     *
-     * <pre>
-     * ws = *(
-     * %x20 /              ; Space
-     * %x09 /              ; Horizontal tab
-     * %x0A /              ; Line feed or New line
-     * %x0D )              ; Carriage return
-     * </pre>
-     *
-     * See <a href="https://tools.ietf.org/html/rfc7159">https://tools.ietf.org/html/rfc7159</a>.
-     */
-    public PrinterBuilder omittingInsignificantWhitespace() {
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          true,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    /**
-     * Create a new {@link PrinterBuilder} that will sort the map keys in the JSON output.
-     *
-     * <p>Use of this modifier is discouraged. The generated JSON messages are equivalent with and
-     * without this option set, but there are some corner use cases that demand a stable output,
-     * while order of map keys is otherwise arbitrary.
-     *
-     * <p>The generated order is not well-defined and should not be depended on, but it's stable.
-     *
-     * <p>This new Printer clones all other configurations from the current {@link PrinterBuilder}.
-     */
-    public PrinterBuilder sortingMapKeys() {
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          true,
-          treatDefaultFieldsAsNull,
-          omitNullFields);
-    }
-
-    public PrinterBuilder treatDefaultFieldsAsNull() {
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          true,
-          omitNullFields);
-    }
-
-    public PrinterBuilder omitNullFields() {
-      return new PrinterBuilder(
-          registry,
-          oldRegistry,
-          alwaysOutputDefaultValueFields,
-          includingDefaultValueFields,
-          preservingProtoFieldNames,
-          omittingInsignificantWhitespace,
-          printingEnumsAsInts,
-          sortingMapKeys,
-          treatDefaultFieldsAsNull,
-          true);
     }
 
     /**
@@ -398,34 +159,180 @@ public class JacksonFormat {
      * @throws IOException if writing to the output fails
      */
     public void appendTo(MessageOrBuilder message, JsonGenerator generator) throws IOException {
-      new PrinterImpl(
-              registry,
-              oldRegistry,
-              alwaysOutputDefaultValueFields,
-              includingDefaultValueFields,
-              preservingProtoFieldNames,
-              generator,
-              printingEnumsAsInts,
-              sortingMapKeys,
-              treatDefaultFieldsAsNull,
-              omitNullFields)
-          .print(message);
+      new PrinterImpl(this, generator).print(message);
+    }
+  }
+
+  /** Builder for {@link Printer} */
+  public static class PrinterBuilder {
+    private TypeRegistry registry;
+    private JsonFormat.TypeRegistry oldRegistry;
+    // NOTE: There are 3 states for these *defaultValueFields variables:
+    // 1) Default - alwaysOutput is false & including is empty set. Fields only output if they are
+    //    set to non-default values.
+    // 2) No-args includingDefaultValueFields() called - alwaysOutput is true & including is
+    //    irrelevant (but set to empty set). All fields are output regardless of their values.
+    // 3) includingDefaultValueFields(Set<FieldDescriptor>) called - alwaysOutput is false &
+    //    including is set to the specified set. Fields in that set are always output & fields not
+    //    in that set are only output if set to non-default values.
+    private boolean alwaysOutputDefaultValueFields;
+    private Set<FieldDescriptor> includingDefaultValueFields;
+    private boolean preservingProtoFieldNames;
+    private boolean printingEnumsAsInts;
+    private boolean sortingMapKeys;
+    private boolean treatDefaultFieldsAsNull;
+    private boolean omitNullFields;
+
+    private PrinterBuilder() {
+      this.registry = TypeRegistry.getEmptyTypeRegistry();
+      this.oldRegistry = JsonFormat.TypeRegistry.getEmptyTypeRegistry();
+      this.alwaysOutputDefaultValueFields = false;
+      this.includingDefaultValueFields = Collections.emptySet();
+      this.preservingProtoFieldNames = false;
+      this.printingEnumsAsInts = false;
+      this.sortingMapKeys = false;
+      this.treatDefaultFieldsAsNull = false;
+      this.omitNullFields = false;
+    }
+
+    /**
+     * Creates a new {@link Printer} using the given registry. The new Printer clones all other
+     * configurations from the current {@link Printer}.
+     *
+     * @throws IllegalArgumentException if a registry is already set
+     */
+    public PrinterBuilder usingTypeRegistry(JsonFormat.TypeRegistry oldRegistry) {
+      if (this.oldRegistry != JsonFormat.TypeRegistry.getEmptyTypeRegistry()
+          || this.registry != TypeRegistry.getEmptyTypeRegistry()) {
+        throw new IllegalArgumentException("Only one registry is allowed.");
+      }
+      this.registry = TypeRegistry.getEmptyTypeRegistry();
+      this.oldRegistry = oldRegistry;
+      return this;
+    }
+
+    /**
+     * Sets the given registry for the {@link PrinterImpl}.
+     *
+     * @throws IllegalArgumentException if a registry is already set
+     */
+    public PrinterBuilder usingTypeRegistry(TypeRegistry registry) {
+      if (this.oldRegistry != JsonFormat.TypeRegistry.getEmptyTypeRegistry()
+          || this.registry != TypeRegistry.getEmptyTypeRegistry()) {
+        throw new IllegalArgumentException("Only one registry is allowed.");
+      }
+      this.registry = registry;
+      return this;
+    }
+
+    /**
+     * Modifier that will also print fields set to their defaults. Empty repeated fields and map
+     * fields will be printed as well.
+     */
+    public PrinterBuilder includingDefaultValueFields() {
+      checkUnsetIncludingDefaultValueFields();
+      alwaysOutputDefaultValueFields = true;
+      includingDefaultValueFields = Collections.emptySet();
+      return this;
+    }
+
+    /** Modifier that prints enum field values as integers instead of as string. */
+    public PrinterBuilder printingEnumsAsInts() {
+      checkUnsetPrintingEnumsAsInts();
+      printingEnumsAsInts = true;
+      return this;
+    }
+
+    private void checkUnsetPrintingEnumsAsInts() {
+      if (printingEnumsAsInts) {
+        throw new IllegalStateException("JsonFormat printingEnumsAsInts has already been set.");
+      }
+    }
+
+    /**
+     * Modifier that will also print default-valued fields if their FieldDescriptors are found in
+     * the supplied set. Empty repeated fields and map fields will be printed as well, if they
+     * match. Call includingDefaultValueFields() with no args to unconditionally output all fields.
+     */
+    public PrinterBuilder includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
+      Preconditions.checkArgument(
+          null != fieldsToAlwaysOutput && !fieldsToAlwaysOutput.isEmpty(),
+          "Non-empty Set must be supplied for includingDefaultValueFields.");
+
+      checkUnsetIncludingDefaultValueFields();
+      alwaysOutputDefaultValueFields = false;
+      includingDefaultValueFields =
+          Collections.unmodifiableSet(new HashSet<>(fieldsToAlwaysOutput));
+      return this;
+    }
+
+    private void checkUnsetIncludingDefaultValueFields() {
+      if (alwaysOutputDefaultValueFields || !includingDefaultValueFields.isEmpty()) {
+        throw new IllegalStateException(
+            "JsonFormat includingDefaultValueFields has already been set.");
+      }
+    }
+
+    /**
+     * Modifier that is configured to use the original proto field names as defined in the .proto
+     * file rather than converting them to lowerCamelCase.
+     */
+    public PrinterBuilder preservingProtoFieldNames() {
+      preservingProtoFieldNames = true;
+      return this;
+    }
+
+    /**
+     * Modifier that will sort the map keys in the JSON output.
+     *
+     * <p>Use of this modifier is discouraged. The generated JSON messages are equivalent with and
+     * without this option set, but there are some corner use cases that demand a stable output,
+     * while order of map keys is otherwise arbitrary.
+     *
+     * <p>The generated order is not well-defined and should not be depended on, but it's stable.
+     */
+    public PrinterBuilder sortingMapKeys() {
+      sortingMapKeys = true;
+      return this;
+    }
+
+    public PrinterBuilder treatDefaultFieldsAsNull() {
+      treatDefaultFieldsAsNull = true;
+      return this;
+    }
+
+    public PrinterBuilder omitNullFields() {
+      omitNullFields = true;
+      return this;
+    }
+
+    public Printer build() {
+      return new Printer(
+          registry,
+          oldRegistry,
+          alwaysOutputDefaultValueFields,
+          includingDefaultValueFields,
+          preservingProtoFieldNames,
+          printingEnumsAsInts,
+          sortingMapKeys,
+          treatDefaultFieldsAsNull,
+          omitNullFields);
     }
   }
 
   /** Creates a {@link Parser} with default configuration. */
   public static Parser parser() {
     return new Parser(
-        com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
         TypeRegistry.getEmptyTypeRegistry(),
+        JsonFormat.TypeRegistry.getEmptyTypeRegistry(),
         false,
         Parser.DEFAULT_RECURSION_LIMIT);
   }
 
   /** A Parser parses the proto3 JSON format into a protobuf message. */
   public static class Parser {
-    private final com.google.protobuf.TypeRegistry registry;
-    private final TypeRegistry oldRegistry;
+    private final TypeRegistry registry;
+    private final JsonFormat.TypeRegistry oldRegistry;
     private final boolean ignoringUnknownFields;
     private final int recursionLimit;
 
@@ -433,8 +340,8 @@ public class JacksonFormat {
     private static final int DEFAULT_RECURSION_LIMIT = 100;
 
     private Parser(
-        com.google.protobuf.TypeRegistry registry,
-        TypeRegistry oldRegistry,
+        TypeRegistry registry,
+        JsonFormat.TypeRegistry oldRegistry,
         boolean ignoreUnknownFields,
         int recursionLimit) {
       this.registry = registry;
@@ -449,16 +356,13 @@ public class JacksonFormat {
      *
      * @throws IllegalArgumentException if a registry is already set
      */
-    public Parser usingTypeRegistry(TypeRegistry oldRegistry) {
-      if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
-          || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
+    public Parser usingTypeRegistry(JsonFormat.TypeRegistry oldRegistry) {
+      if (this.oldRegistry != JsonFormat.TypeRegistry.getEmptyTypeRegistry()
+          || this.registry != TypeRegistry.getEmptyTypeRegistry()) {
         throw new IllegalArgumentException("Only one registry is allowed.");
       }
       return new Parser(
-          com.google.protobuf.TypeRegistry.getEmptyTypeRegistry(),
-          oldRegistry,
-          ignoringUnknownFields,
-          recursionLimit);
+          TypeRegistry.getEmptyTypeRegistry(), oldRegistry, ignoringUnknownFields, recursionLimit);
     }
 
     /**
@@ -467,9 +371,9 @@ public class JacksonFormat {
      *
      * @throws IllegalArgumentException if a registry is already set
      */
-    public Parser usingTypeRegistry(com.google.protobuf.TypeRegistry registry) {
-      if (this.oldRegistry != TypeRegistry.getEmptyTypeRegistry()
-          || this.registry != com.google.protobuf.TypeRegistry.getEmptyTypeRegistry()) {
+    public Parser usingTypeRegistry(TypeRegistry registry) {
+      if (this.oldRegistry != JsonFormat.TypeRegistry.getEmptyTypeRegistry()
+          || this.registry != TypeRegistry.getEmptyTypeRegistry()) {
         throw new IllegalArgumentException("Only one registry is allowed.");
       }
       return new Parser(registry, oldRegistry, ignoringUnknownFields, recursionLimit);
@@ -486,8 +390,8 @@ public class JacksonFormat {
     /**
      * Parses from the proto3 JSON format into a protobuf message.
      *
-     * @throws InvalidProtocolBufferException if the input is not valid JSON
-     *         proto3 format or there are unknown fields in the input.
+     * @throws InvalidProtocolBufferException if the input is not valid JSON proto3 format or there
+     *     are unknown fields in the input.
      */
     public void merge(TreeNode treeNode, Message.Builder builder)
         throws InvalidProtocolBufferException {
@@ -538,8 +442,8 @@ public class JacksonFormat {
 
   /** A Printer converts protobuf messages to the proto3 JSON format. */
   private static final class PrinterImpl {
-    private final com.google.protobuf.TypeRegistry registry;
-    private final TypeRegistry oldRegistry;
+    private final TypeRegistry registry;
+    private final JsonFormat.TypeRegistry oldRegistry;
     private final boolean alwaysOutputDefaultValueFields;
     private final Set<FieldDescriptor> includingDefaultValueFields;
     private final boolean preservingProtoFieldNames;
@@ -549,27 +453,17 @@ public class JacksonFormat {
     private final boolean omitNullFields;
     private final JsonGenerator generator;
 
-    PrinterImpl(
-        com.google.protobuf.TypeRegistry registry,
-        TypeRegistry oldRegistry,
-        boolean alwaysOutputDefaultValueFields,
-        Set<FieldDescriptor> includingDefaultValueFields,
-        boolean preservingProtoFieldNames,
-        JsonGenerator jsonGenerator,
-        boolean printingEnumsAsInts,
-        boolean sortingMapKeys,
-        boolean treatDefaultFieldsAsNull,
-        boolean omitNullFields) {
-      this.registry = registry;
-      this.oldRegistry = oldRegistry;
-      this.alwaysOutputDefaultValueFields = alwaysOutputDefaultValueFields;
-      this.includingDefaultValueFields = includingDefaultValueFields;
-      this.preservingProtoFieldNames = preservingProtoFieldNames;
-      this.printingEnumsAsInts = printingEnumsAsInts;
-      this.sortingMapKeys = sortingMapKeys;
+    PrinterImpl(@Nonnull Printer printer, JsonGenerator jsonGenerator) {
+      this.registry = printer.registry;
+      this.oldRegistry = printer.oldRegistry;
+      this.alwaysOutputDefaultValueFields = printer.alwaysOutputDefaultValueFields;
+      this.includingDefaultValueFields = printer.includingDefaultValueFields;
+      this.preservingProtoFieldNames = printer.preservingProtoFieldNames;
+      this.printingEnumsAsInts = printer.printingEnumsAsInts;
+      this.sortingMapKeys = printer.sortingMapKeys;
+      this.treatDefaultFieldsAsNull = printer.treatDefaultFieldsAsNull;
+      this.omitNullFields = printer.omitNullFields;
       this.generator = jsonGenerator;
-      this.treatDefaultFieldsAsNull = treatDefaultFieldsAsNull;
-      this.omitNullFields = omitNullFields;
     }
 
     void print(MessageOrBuilder message) throws IOException {
@@ -1069,8 +963,8 @@ public class JacksonFormat {
     }
   }
 
-  private static Descriptor getDescriptorForTypeUrl(TypeRegistry oldRegistry, String typeUrl)
-      throws InvalidProtocolBufferException {
+  private static Descriptor getDescriptorForTypeUrl(
+      JsonFormat.TypeRegistry oldRegistry, String typeUrl) throws InvalidProtocolBufferException {
     return oldRegistry.find(getTypeName(typeUrl));
   }
 
@@ -1083,15 +977,15 @@ public class JacksonFormat {
   }
 
   public static class ParserTreeImpl {
-    private final com.google.protobuf.TypeRegistry registry;
-    private final TypeRegistry oldRegistry;
+    private final TypeRegistry registry;
+    private final JsonFormat.TypeRegistry oldRegistry;
     private final boolean ignoringUnknownFields;
     private final int recursionLimit;
     private int currentDepth;
 
     ParserTreeImpl(
-        com.google.protobuf.TypeRegistry registry,
-        TypeRegistry oldRegistry,
+        TypeRegistry registry,
+        JsonFormat.TypeRegistry oldRegistry,
         boolean ignoreUnknownFields,
         int recursionLimit) {
       this.registry = registry;
@@ -1321,8 +1215,8 @@ public class JacksonFormat {
         Timestamp value = Timestamps.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Failed to parse timestamp: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Failed to parse timestamp: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1334,8 +1228,8 @@ public class JacksonFormat {
         Duration value = Durations.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Failed to parse duration: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Failed to parse duration: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1517,8 +1411,8 @@ public class JacksonFormat {
         BigDecimal value = new BigDecimal(json.asText());
         return value.intValueExact();
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not an int32 value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not an int32 value: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1537,8 +1431,8 @@ public class JacksonFormat {
         BigDecimal value = new BigDecimal(json.asText());
         return value.longValueExact();
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not an int64 value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not an int64 value: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1565,8 +1459,8 @@ public class JacksonFormat {
         }
         return value.intValue();
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not an uint32 value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not an uint32 value: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1583,8 +1477,8 @@ public class JacksonFormat {
         }
         return value.longValue();
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not an uint64 value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not an uint64 value: " + json);
         ex.initCause(e);
         throw ex;
       }
@@ -1624,8 +1518,8 @@ public class JacksonFormat {
         }
         return (float) value;
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not a float value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not a float value: " + json);
         ex.initCause(e);
         throw e;
       }
@@ -1658,8 +1552,8 @@ public class JacksonFormat {
         }
         return value.doubleValue();
       } catch (RuntimeException e) {
-        InvalidProtocolBufferException ex = new InvalidProtocolBufferException(
-            "Not a double value: " + json);
+        InvalidProtocolBufferException ex =
+            new InvalidProtocolBufferException("Not a double value: " + json);
         ex.initCause(e);
         throw ex;
       }
