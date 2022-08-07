@@ -1,1 +1,1 @@
-com.xflowpay.protobuf.util.jackson.JavaProtoModule
+io.github.hexafolk.proto.jackson.JavaProtoModule

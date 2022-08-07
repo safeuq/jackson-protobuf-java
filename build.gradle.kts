@@ -5,7 +5,7 @@ plugins {
   id("com.diffplug.spotless") version "6.9.0"
 }
 
-group = "com.xflowpay"
+group = "io.github.hexafolk"
 version = "0.1-SNAPSHOT"
 
 repositories {
@@ -20,8 +20,8 @@ dependencies {
   implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
   implementation("com.google.guava:guava:$guavaVersion")
 
-  implementation("com.google.errorprone:error_prone_annotations:2.5.1")
-  implementation("com.google.j2objc:j2objc-annotations:1.3")
+//  implementation("com.google.errorprone:error_prone_annotations:2.5.1")
+//  implementation("com.google.j2objc:j2objc-annotations:1.3")
   implementation("com.google.code.findbugs:jsr305:3.0.2")
   implementation("com.fasterxml.jackson.core:jackson-databind:2.13.2.1")
 
