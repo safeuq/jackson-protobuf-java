@@ -11,9 +11,19 @@ import com.fasterxml.jackson.databind.deser.Deserializers;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.google.protobuf.Internal;
 import com.google.protobuf.Message;
+import com.google.protobuf.TypeRegistry;
+import com.google.protobuf.util.JsonFormat;
 import java.io.IOException;
 
 public class MessageDeserializers extends Deserializers.Base {
+  private final TypeRegistry registry;
+  private final JsonFormat.TypeRegistry oldRegistry;
+
+  public MessageDeserializers(TypeRegistry registry, JsonFormat.TypeRegistry oldRegistry) {
+    this.registry = registry;
+    this.oldRegistry = oldRegistry;
+  }
+
   @Override
   @SuppressWarnings("unchecked")
   public JsonDeserializer<?> findBeanDeserializer(
@@ -26,7 +36,7 @@ public class MessageDeserializers extends Deserializers.Base {
     return super.findBeanDeserializer(type, config, beanDesc);
   }
 
-  private static class DeserializerImpl extends StdDeserializer<Message> {
+  private class DeserializerImpl extends StdDeserializer<Message> {
     private DeserializerImpl(Class<? extends Message> messageClass) {
       super(messageClass);
     }
@@ -35,7 +45,14 @@ public class MessageDeserializers extends Deserializers.Base {
     public Message deserialize(JsonParser parser, DeserializationContext context)
         throws IOException {
       Message.Builder builder = Internal.getDefaultInstance(handledType()).newBuilderForType();
-      JacksonFormat.parser().merge(parser.readValueAsTree(), builder);
+      JacksonFormat.Parser protoJsonParser = JacksonFormat.parser();
+      if (registry != null) {
+        protoJsonParser = protoJsonParser.usingTypeRegistry(registry);
+      }
+      if (oldRegistry != null) {
+        protoJsonParser = protoJsonParser.usingTypeRegistry(oldRegistry);
+      }
+      protoJsonParser.merge(parser.readValueAsTree(), builder);
       return builder.build();
     }
 

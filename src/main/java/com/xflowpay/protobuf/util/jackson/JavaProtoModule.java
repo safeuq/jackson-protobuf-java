@@ -48,7 +48,7 @@ public class JavaProtoModule extends Module {
         new MessageSerializer(
             treatDefaultFieldsAsIs, preservingProtoFieldNames, registry, oldRegistry));
     context.addSerializers(simpleSerializers);
-    context.addDeserializers(new MessageDeserializers());
+    context.addDeserializers(new MessageDeserializers(registry, oldRegistry));
   }
 
   public static Builder builder() {
