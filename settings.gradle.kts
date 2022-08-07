@@ -1,1 +1,1 @@
-rootProject.name = "protobuf-jackson-util"
+rootProject.name = "jackson-protobuf-java"
