@@ -1,4 +1,4 @@
-package io.github.hexafolk.proto.jackson;
+package io.github.safeuq.proto.jackson;
 
 import org.junit.jupiter.api.Test;
 

@@ -42,7 +42,7 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-package io.github.hexafolk.proto.jackson;
+package io.github.safeuq.proto.jackson;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.TreeNode;
@@ -1146,7 +1146,7 @@ public class JacksonFormat {
       ObjectNode object = (ObjectNode) json;
       Map<String, FieldDescriptor> fieldNameMap = getFieldNameMap(builder.getDescriptorForType());
 
-      var iterator = object.fields();
+      Iterator<Map.Entry<String, JsonNode>> iterator = object.fields();
       while (iterator.hasNext()) {
         Map.Entry<String, JsonNode> entry = iterator.next();
         String key = entry.getKey();
