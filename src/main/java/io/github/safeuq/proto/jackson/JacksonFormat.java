@@ -431,29 +431,6 @@ public class JacksonFormat {
     void print(final CharSequence text) throws IOException;
   }
 
-  /** Format the JSON without indentation */
-  private static final class CompactTextGenerator implements TextGenerator {
-    private final Appendable output;
-
-    private CompactTextGenerator(final Appendable output) {
-      this.output = output;
-    }
-
-    /** ignored by compact printer */
-    @Override
-    public void indent() {}
-
-    /** ignored by compact printer */
-    @Override
-    public void outdent() {}
-
-    /** Print text to the output stream. */
-    @Override
-    public void print(final CharSequence text) throws IOException {
-      output.append(text);
-    }
-  }
-
   /** A Printer converts protobuf messages to the proto3 JSON format. */
   private static final class PrinterImpl {
     private final TypeRegistry registry;
