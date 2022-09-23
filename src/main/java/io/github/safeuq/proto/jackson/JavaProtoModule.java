@@ -52,7 +52,7 @@ public class JavaProtoModule extends Module {
 
   @Override
   public Version version() {
-    return new Version(0, 1, 0, null, "com.xflowpay", "protobuf-jackson-util");
+    return new Version(0, 1, 0, null, "io.github.safeuq", "protobuf-jackson-util");
   }
 
   @Override
