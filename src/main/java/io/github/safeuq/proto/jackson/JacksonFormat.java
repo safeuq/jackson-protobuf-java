@@ -62,7 +62,6 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor.Type;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.OneofDescriptor;
 import com.google.protobuf.DoubleValue;
@@ -671,7 +670,16 @@ public class JacksonFormat {
         throw new InvalidProtocolBufferException("Invalid Value type.");
       }
       for (Map.Entry<FieldDescriptor, Object> entry : fields.entrySet()) {
-        printSingleFieldValue(entry.getKey(), entry.getValue());
+        FieldDescriptor field = entry.getKey();
+        if (field.getType() == FieldDescriptor.Type.DOUBLE) {
+          Double doubleValue = (Double) entry.getValue();
+          if (doubleValue.isNaN() || doubleValue.isInfinite()) {
+            throw new IllegalArgumentException(
+                "google.protobuf.Value cannot encode double values for "
+                + "infinity or nan, because they would be parsed as a string.");
+          }
+        }
+        printSingleFieldValue(field, entry.getValue());
       }
     }
 
@@ -1338,7 +1346,7 @@ public class JacksonFormat {
         Object key = parseFieldValue(keyField, TextNode.valueOf(entry.getKey()), entryBuilder);
         Object value = parseFieldValue(valueField, entry.getValue(), entryBuilder);
         if (value == null) {
-          if (ignoringUnknownFields && valueField.getType() == Type.ENUM) {
+          if (ignoringUnknownFields && valueField.getType() == FieldDescriptor.Type.ENUM) {
             continue;
           } else {
             throw new InvalidProtocolBufferException("Map value cannot be null.");
@@ -1378,7 +1386,7 @@ public class JacksonFormat {
       for (int i = 0; i < array.size(); ++i) {
         Object value = parseFieldValue(field, array.get(i), builder);
         if (value == null) {
-          if (ignoringUnknownFields && field.getType() == Type.ENUM) {
+          if (ignoringUnknownFields && field.getType() == FieldDescriptor.Type.ENUM) {
             continue;
           } else {
             throw new InvalidProtocolBufferException(
@@ -1571,10 +1579,10 @@ public class JacksonFormat {
         // Try to interpret the value as a number.
         try {
           int numericValue = parseInt32(json);
-          if (enumDescriptor.getFile().getSyntax() == FileDescriptor.Syntax.PROTO3) {
-            result = enumDescriptor.findValueByNumberCreatingIfUnknown(numericValue);
-          } else {
+          if (enumDescriptor.isClosed()) {
             result = enumDescriptor.findValueByNumber(numericValue);
+          } else {
+            result = enumDescriptor.findValueByNumberCreatingIfUnknown(numericValue);
           }
         } catch (InvalidProtocolBufferException e) {
           // Fall through. This exception is about invalid int32 value we get from parseInt32() but
