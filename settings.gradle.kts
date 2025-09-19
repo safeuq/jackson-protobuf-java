@@ -1,1 +1,8 @@
-rootProject.name = "protobuf-jackson-util"
+rootProject.name = "jackson-protobuf-java"
+
+pluginManagement {
+  repositories {
+    gradlePluginPortal()
+    mavenCentral()
+  }
+}
