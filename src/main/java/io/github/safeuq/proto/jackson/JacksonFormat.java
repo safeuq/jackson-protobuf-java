@@ -62,7 +62,6 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
-import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.OneofDescriptor;
 import com.google.protobuf.DoubleValue;
 import com.google.protobuf.Duration;
@@ -676,7 +675,7 @@ public class JacksonFormat {
           if (doubleValue.isNaN() || doubleValue.isInfinite()) {
             throw new IllegalArgumentException(
                 "google.protobuf.Value cannot encode double values for "
-                + "infinity or nan, because they would be parsed as a string.");
+                    + "infinity or nan, because they would be parsed as a string.");
           }
         }
         printSingleFieldValue(field, entry.getValue());
@@ -1214,10 +1213,7 @@ public class JacksonFormat {
         Timestamp value = Timestamps.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
-        InvalidProtocolBufferException ex =
-            new InvalidProtocolBufferException("Failed to parse timestamp: " + json);
-        ex.initCause(e);
-        throw ex;
+        throw new InvalidProtocolBufferException("Failed to parse timestamp: " + json, e);
       }
     }
 
@@ -1227,10 +1223,7 @@ public class JacksonFormat {
         Duration value = Durations.parse(((JsonNode) json).asText());
         builder.mergeFrom(value.toByteString());
       } catch (ParseException | UnsupportedOperationException e) {
-        InvalidProtocolBufferException ex =
-            new InvalidProtocolBufferException("Failed to parse duration: " + json);
-        ex.initCause(e);
-        throw ex;
+        throw new InvalidProtocolBufferException("Failed to parse duration: " + json, e);
       }
     }
 

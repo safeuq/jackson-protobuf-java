@@ -18,6 +18,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
 import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -60,6 +61,10 @@ public class MessageDeserializers extends Deserializers.Base {
         throws IOException {
       Message.Builder builder = Internal.getDefaultInstance(handledType()).newBuilderForType();
       JacksonFormat.Parser protoJsonParser = JacksonFormat.parser();
+      if (!context.hasDeserializationFeatures(
+          DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES.getMask())) {
+        protoJsonParser = protoJsonParser.ignoringUnknownFields();
+      }
       if (registry != null) {
         protoJsonParser = protoJsonParser.usingTypeRegistry(registry);
       }
