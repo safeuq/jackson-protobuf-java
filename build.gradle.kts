@@ -4,6 +4,7 @@ plugins {
   `maven-publish`
   signing
   id("com.diffplug.spotless") version "6.9.0"
+  id("com.google.protobuf") version "0.9.4"
 }
 
 group = "io.github.safeuq"
@@ -26,23 +27,21 @@ dependencies {
 //  implementation("com.google.errorprone:error_prone_annotations:2.5.1")
 //  implementation("com.google.j2objc:j2objc-annotations:1.3")
   implementation("com.google.code.findbugs:jsr305:3.0.2")
-  compileOnly("com.fasterxml.jackson.core:jackson-databind:2.13.4.1")
 
-  testImplementation("org.junit.jupiter:junit-jupiter:5.9.0")
+  compileOnly("com.fasterxml.jackson.core:jackson-databind:2.15.1")
+  testImplementation("com.fasterxml.jackson.core:jackson-databind:2.15.1")
+
+  testImplementation("org.junit.jupiter:junit-jupiter:5.9.2")
   testImplementation("com.google.guava:guava-testlib:$guavaVersion")
 //  testImplementation("org.mockito:mockito-core")
 //  testImplementation("com.google.truth:truth")
 }
 
 spotless {
-  format("default") {
-    target("*.java")
-    trimTrailingWhitespace()
-    endWithNewline()
-  }
-
   java {
+    toggleOffOn()
     googleJavaFormat().reflowLongStrings()
+    targetExclude("build/**/*.*")
   }
 }
 
@@ -55,6 +54,12 @@ java {
   withJavadocJar()
 }
 
+protobuf {
+  protoc {
+    artifact = "com.google.protobuf:protoc:3.18.1"
+  }
+}
+
 publishing {
   publications {
     create<MavenPublication>("library") {
@@ -65,35 +70,37 @@ publishing {
       from(components["java"])
 
       pom {
-        name set project.name
-        description set "Library to serialize & deserialize protoc generated Java " +
-            "objects to/from Jackson supported data-formats"
-        url set "https://github.com/safeuq/jackson-protobuf-java"
+        name = project.name
+        description = "Library to serialize & deserialize protoc generated Java " +
+                  "objects to/from Jackson supported data-formats"
+        url = "https://github.com/safeuq/jackson-protobuf-java"
 
         scm {
-          connection set "scm:git:git://github.com/safeuq/jackson-protobuf-java.git"
-          developerConnection set "scm:git:https://github.com/safeuq/jackson-protobuf-java.git"
-          url set "https://github.com/safeuq/jackson-protobuf-java/tree/main"
+          connection = "scm:git:git://github.com/safeuq/jackson-protobuf-java.git"
+          developerConnection = "scm:git:https://github.com/safeuq/jackson-protobuf-java.git"
+          url = "https://github.com/safeuq/jackson-protobuf-java/tree/main"
         }
 
         licenses {
           license {
-            name set "Apache License, Version 2.0"
-            url set "http://www.apache.org/licenses/LICENSE-2.0.txt"
+            name = "Apache License, Version 2.0"
+            url = "http://www.apache.org/licenses/LICENSE-2.0.txt"
           }
         }
 
         developers {
           developer {
-            id set "safeuq"
-            name set "Safeuq Mohamed"
-            email set "mohamedsafeuq@gmail.com"
+            id = "safeuq"
+            name = "Safeuq Mohamed"
+            email = "mohamedsafeuq@gmail.com"
           }
         }
       }
 
       repositories {
         maven {
+          name = "sonatype-ossrh"
+
           credentials {
             username = ossrhUsername
             password = ossrhPassword
@@ -110,5 +117,8 @@ signing {
   sign(publishing.publications["library"])
 }
 
-infix fun <T> Property<T>.set(value: T) = set(value)
-
+tasks {
+  test {
+    useJUnitPlatform()
+  }
+}
