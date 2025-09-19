@@ -23,6 +23,8 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.util.JsonFormat;
+import org.jspecify.annotations.Nullable;
+
 import java.io.IOException;
 
 /**
@@ -31,14 +33,14 @@ import java.io.IOException;
 public class MessageSerializer extends StdSerializer<MessageOrBuilder> {
   private final boolean treatDefaultFieldsAsIs;
   private final boolean preservingProtoFieldNames;
-  private final TypeRegistry registry;
-  private final JsonFormat.TypeRegistry oldRegistry;
+  private final @Nullable TypeRegistry registry;
+  private final JsonFormat.@Nullable TypeRegistry oldRegistry;
 
   public MessageSerializer(
       boolean treatDefaultFieldsAsIs,
       boolean preservingProtoFieldNames,
-      TypeRegistry registry,
-      JsonFormat.TypeRegistry oldRegistry) {
+      @Nullable TypeRegistry registry,
+      JsonFormat.@Nullable TypeRegistry oldRegistry) {
     super(MessageOrBuilder.class);
     this.treatDefaultFieldsAsIs = treatDefaultFieldsAsIs;
     this.preservingProtoFieldNames = preservingProtoFieldNames;

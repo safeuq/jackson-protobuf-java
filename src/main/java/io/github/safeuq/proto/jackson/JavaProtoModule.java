@@ -19,12 +19,13 @@ import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.module.SimpleSerializers;
 import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.util.JsonFormat;
+import org.jspecify.annotations.Nullable;
 
 public class JavaProtoModule extends Module {
   private final boolean treatDefaultFieldsAsIs;
   private final boolean preservingProtoFieldNames;
-  private final TypeRegistry registry;
-  private final JsonFormat.TypeRegistry oldRegistry;
+  private final @Nullable TypeRegistry registry;
+  private final JsonFormat.@Nullable TypeRegistry oldRegistry;
 
   /**
    * No-arg constructor for registering the module as SPI provider. It is generally preferable to
@@ -37,8 +38,8 @@ public class JavaProtoModule extends Module {
   private JavaProtoModule(
       boolean treatDefaultFieldsAsIs,
       boolean preservingProtoFieldNames,
-      TypeRegistry registry,
-      JsonFormat.TypeRegistry oldRegistry) {
+      @Nullable TypeRegistry registry,
+      JsonFormat.@Nullable TypeRegistry oldRegistry) {
     this.treatDefaultFieldsAsIs = treatDefaultFieldsAsIs;
     this.preservingProtoFieldNames = preservingProtoFieldNames;
     this.registry = registry;
@@ -72,8 +73,8 @@ public class JavaProtoModule extends Module {
   public static class Builder {
     private boolean treatDefaultFieldsAsIs;
     private boolean preservingProtoFieldNames;
-    private TypeRegistry registry;
-    private JsonFormat.TypeRegistry oldRegistry;
+    private @Nullable TypeRegistry registry;
+    private JsonFormat.@Nullable TypeRegistry oldRegistry;
 
     private Builder() {}
 
