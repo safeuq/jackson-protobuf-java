@@ -14,33 +14,10 @@
 
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 package io.github.safeuq.proto.jackson;
 
@@ -53,6 +30,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.fasterxml.jackson.databind.node.ValueNode;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.io.BaseEncoding;
 import com.google.protobuf.Any;
 import com.google.protobuf.BoolValue;
@@ -62,7 +40,6 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
-import com.google.protobuf.Descriptors.OneofDescriptor;
 import com.google.protobuf.DoubleValue;
 import com.google.protobuf.Duration;
 import com.google.protobuf.DynamicMessage;
@@ -91,10 +68,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.text.ParseException;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -106,11 +81,7 @@ import javax.annotation.Nullable;
 
 /**
  * Utility class to convert protobuf messages to/from the <a href=
- * "https://developers.google.com/protocol-buffers/docs/proto3#json">Proto3 JSON format.</a> Only
- * proto3 features are supported. Proto2 only features such as extensions and unknown fields are
- * discarded in the conversion. That is, when converting proto2 messages to JSON format, extensions
- * and unknown fields are treated as if they do not exist. This applies to proto2 messages embedded
- * in proto3 messages as well.
+ * 'https://protobuf.dev/programming-guides/json/'>ProtoJSON format.</a>
  */
 public class JacksonFormat {
   private static final Logger logger = Logger.getLogger(JacksonFormat.class.getName());
@@ -122,20 +93,22 @@ public class JacksonFormat {
     return new PrinterBuilder();
   }
 
+  private enum ShouldPrintDefaults {
+    ONLY_IF_PRESENT, // The "normal" behavior; the others add more compared to this baseline.
+    ALWAYS_PRINT_EXCEPT_MESSAGES_AND_ONEOFS,
+    ALWAYS_PRINT_WITHOUT_PRESENCE_FIELDS,
+    ALWAYS_PRINT_SPECIFIED_FIELDS
+  }
+
   /** A Printer converts a protobuf message to the proto3 JSON format. */
   public static class Printer {
     private final TypeRegistry registry;
     private final JsonFormat.TypeRegistry oldRegistry;
-    // NOTE: There are 3 states for these *defaultValueFields variables:
-    // 1) Default - alwaysOutput is false & including is empty set. Fields only output if they are
-    //    set to non-default values.
-    // 2) No-args includingDefaultValueFields() called - alwaysOutput is true & including is
-    //    irrelevant (but set to empty set). All fields are output regardless of their values.
-    // 3) includingDefaultValueFields(Set<FieldDescriptor>) called - alwaysOutput is false &
-    //    including is set to the specified set. Fields in that set are always output & fields not
-    //    in that set are only output if set to non-default values.
-    private final boolean alwaysOutputDefaultValueFields;
+    private final ShouldPrintDefaults shouldPrintDefaults;
+
+    // Empty unless shouldPrintDefaults is set to ALWAYS_PRINT_SPECIFIED_FIELDS.
     private final Set<FieldDescriptor> includingDefaultValueFields;
+
     private final boolean preservingProtoFieldNames;
     private final boolean printingEnumsAsInts;
     private final boolean sortingMapKeys;
@@ -145,7 +118,7 @@ public class JacksonFormat {
     private Printer(
         TypeRegistry registry,
         JsonFormat.TypeRegistry oldRegistry,
-        boolean alwaysOutputDefaultValueFields,
+        ShouldPrintDefaults shouldOutputDefaults,
         Set<FieldDescriptor> includingDefaultValueFields,
         boolean preservingProtoFieldNames,
         boolean printingEnumsAsInts,
@@ -154,7 +127,7 @@ public class JacksonFormat {
         boolean omitNullFields) {
       this.registry = registry;
       this.oldRegistry = oldRegistry;
-      this.alwaysOutputDefaultValueFields = alwaysOutputDefaultValueFields;
+      this.shouldPrintDefaults = shouldOutputDefaults;
       this.includingDefaultValueFields = includingDefaultValueFields;
       this.preservingProtoFieldNames = preservingProtoFieldNames;
       this.printingEnumsAsInts = printingEnumsAsInts;
@@ -179,16 +152,11 @@ public class JacksonFormat {
   public static class PrinterBuilder {
     private TypeRegistry registry;
     private JsonFormat.TypeRegistry oldRegistry;
-    // NOTE: There are 3 states for these *defaultValueFields variables:
-    // 1) Default - alwaysOutput is false & including is empty set. Fields only output if they are
-    //    set to non-default values.
-    // 2) No-args includingDefaultValueFields() called - alwaysOutput is true & including is
-    //    irrelevant (but set to empty set). All fields are output regardless of their values.
-    // 3) includingDefaultValueFields(Set<FieldDescriptor>) called - alwaysOutput is false &
-    //    including is set to the specified set. Fields in that set are always output & fields not
-    //    in that set are only output if set to non-default values.
-    private boolean alwaysOutputDefaultValueFields;
+    private ShouldPrintDefaults shouldPrintDefaults;
+
+    // Empty unless shouldPrintDefaults is set to ALWAYS_PRINT_SPECIFIED_FIELDS.
     private Set<FieldDescriptor> includingDefaultValueFields;
+
     private boolean preservingProtoFieldNames;
     private boolean printingEnumsAsInts;
     private boolean sortingMapKeys;
@@ -198,8 +166,8 @@ public class JacksonFormat {
     private PrinterBuilder() {
       this.registry = TypeRegistry.getEmptyTypeRegistry();
       this.oldRegistry = JsonFormat.TypeRegistry.getEmptyTypeRegistry();
-      this.alwaysOutputDefaultValueFields = false;
-      this.includingDefaultValueFields = Collections.emptySet();
+      this.shouldPrintDefaults = ShouldPrintDefaults.ONLY_IF_PRESENT;
+      this.includingDefaultValueFields = ImmutableSet.of();
       this.preservingProtoFieldNames = false;
       this.printingEnumsAsInts = false;
       this.sortingMapKeys = false;
@@ -238,13 +206,58 @@ public class JacksonFormat {
     }
 
     /**
-     * Modifier that will also print fields set to their defaults. Empty repeated fields and map
-     * fields will be printed as well.
+     * Modifier that will always print fields unless they are a message type or in a oneof.
+     *
+     * <p>Note that this does print Proto2 Optional but does not print Proto3 Optional fields, as
+     * the latter is represented using a synthetic oneof.
+     *
+     * @deprecated This method is deprecated, and slated for removal in the next Java breaking
+     *     change (5.x). Prefer {@link #alwaysPrintFieldsWithNoPresence}
      */
+    @Deprecated
     public PrinterBuilder includingDefaultValueFields() {
-      checkUnsetIncludingDefaultValueFields();
-      alwaysOutputDefaultValueFields = true;
-      includingDefaultValueFields = Collections.emptySet();
+      if (shouldPrintDefaults != ShouldPrintDefaults.ONLY_IF_PRESENT) {
+        throw new IllegalStateException(
+            "JsonFormat includingDefaultValueFields has already been set.");
+      }
+      shouldPrintDefaults = ShouldPrintDefaults.ALWAYS_PRINT_EXCEPT_MESSAGES_AND_ONEOFS;
+      includingDefaultValueFields = ImmutableSet.of();
+      return this;
+    }
+
+    /**
+     * Modifier that will also print default-valued fields if their FieldDescriptors are found in
+     * the supplied set. Empty repeated fields and map fields will be printed as well, if they
+     * match.
+     *
+     * <p>Note that non-repeated message fields or fields in a oneof are not honored if provided
+     * here.
+     */
+    public PrinterBuilder includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
+      Preconditions.checkArgument(
+          null != fieldsToAlwaysOutput && !fieldsToAlwaysOutput.isEmpty(),
+          "Non-empty Set must be supplied for includingDefaultValueFields.");
+      if (shouldPrintDefaults != ShouldPrintDefaults.ONLY_IF_PRESENT) {
+        throw new IllegalStateException(
+            "JsonFormat includingDefaultValueFields has already been set.");
+      }
+      shouldPrintDefaults = ShouldPrintDefaults.ALWAYS_PRINT_SPECIFIED_FIELDS;
+      includingDefaultValueFields = ImmutableSet.copyOf(fieldsToAlwaysOutput);
+      return this;
+    }
+
+    /**
+     * Creates a new {@link Printer} that will print any field that does not support presence even
+     * if it would not otherwise be printed (empty repeated fields, empty map fields, and implicit
+     * presence scalars set to their default value). The new Printer clones all other configurations
+     * from the current {@link Printer}.
+     */
+    public PrinterBuilder alwaysPrintFieldsWithNoPresence() {
+      if (shouldPrintDefaults != ShouldPrintDefaults.ONLY_IF_PRESENT) {
+        throw new IllegalStateException("Only one of the JsonFormat defaults options can be set.");
+      }
+      shouldPrintDefaults = ShouldPrintDefaults.ALWAYS_PRINT_WITHOUT_PRESENCE_FIELDS;
+      includingDefaultValueFields = ImmutableSet.of();
       return this;
     }
 
@@ -258,30 +271,6 @@ public class JacksonFormat {
     private void checkUnsetPrintingEnumsAsInts() {
       if (printingEnumsAsInts) {
         throw new IllegalStateException("JsonFormat printingEnumsAsInts has already been set.");
-      }
-    }
-
-    /**
-     * Modifier that will also print default-valued fields if their FieldDescriptors are found in
-     * the supplied set. Empty repeated fields and map fields will be printed as well, if they
-     * match. Call includingDefaultValueFields() with no args to unconditionally output all fields.
-     */
-    public PrinterBuilder includingDefaultValueFields(Set<FieldDescriptor> fieldsToAlwaysOutput) {
-      Preconditions.checkArgument(
-          null != fieldsToAlwaysOutput && !fieldsToAlwaysOutput.isEmpty(),
-          "Non-empty Set must be supplied for includingDefaultValueFields.");
-
-      checkUnsetIncludingDefaultValueFields();
-      alwaysOutputDefaultValueFields = false;
-      includingDefaultValueFields =
-          Collections.unmodifiableSet(new HashSet<>(fieldsToAlwaysOutput));
-      return this;
-    }
-
-    private void checkUnsetIncludingDefaultValueFields() {
-      if (alwaysOutputDefaultValueFields || !includingDefaultValueFields.isEmpty()) {
-        throw new IllegalStateException(
-            "JsonFormat includingDefaultValueFields has already been set.");
       }
     }
 
@@ -322,7 +311,7 @@ public class JacksonFormat {
       return new Printer(
           registry,
           oldRegistry,
-          alwaysOutputDefaultValueFields,
+          shouldPrintDefaults,
           includingDefaultValueFields,
           preservingProtoFieldNames,
           printingEnumsAsInts,
@@ -433,7 +422,7 @@ public class JacksonFormat {
   private static final class PrinterImpl {
     private final TypeRegistry registry;
     private final JsonFormat.TypeRegistry oldRegistry;
-    private final boolean alwaysOutputDefaultValueFields;
+    private final ShouldPrintDefaults shouldPrintDefaults;
     private final Set<FieldDescriptor> includingDefaultValueFields;
     private final boolean preservingProtoFieldNames;
     private final boolean printingEnumsAsInts;
@@ -445,7 +434,7 @@ public class JacksonFormat {
     PrinterImpl(@Nonnull Printer printer, JsonGenerator jsonGenerator) {
       this.registry = printer.registry;
       this.oldRegistry = printer.oldRegistry;
-      this.alwaysOutputDefaultValueFields = printer.alwaysOutputDefaultValueFields;
+      this.shouldPrintDefaults = printer.shouldPrintDefaults;
       this.includingDefaultValueFields = printer.includingDefaultValueFields;
       this.preservingProtoFieldNames = printer.preservingProtoFieldNames;
       this.printingEnumsAsInts = printer.printingEnumsAsInts;
@@ -559,7 +548,7 @@ public class JacksonFormat {
 
     /** Prints google.protobuf.Any */
     private void printAny(MessageOrBuilder message) throws IOException {
-      if (Any.getDefaultInstance().equals(message)) {
+      if (message.getDefaultInstanceForType().equals(message)) {
         generator.writeStartObject();
         generator.writeEndObject();
         return;
@@ -692,6 +681,28 @@ public class JacksonFormat {
       printRepeatedFieldValue(field, message.getField(field));
     }
 
+    // Whether a set option means the corresponding field should be printed even if it normally
+    // wouldn't be.
+    private boolean shouldSpeciallyPrint(FieldDescriptor field) {
+      switch (shouldPrintDefaults) {
+        case ONLY_IF_PRESENT:
+          return false;
+        case ALWAYS_PRINT_EXCEPT_MESSAGES_AND_ONEOFS:
+          return !field.hasPresence()
+              || (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                  && field.getContainingOneof() == null);
+        case ALWAYS_PRINT_WITHOUT_PRESENCE_FIELDS:
+          return !field.hasPresence();
+        case ALWAYS_PRINT_SPECIFIED_FIELDS:
+          // For legacy code compatibility, we don't honor non-repeated message or oneof fields even
+          // if they're explicitly requested. :(
+          return !(field.getJavaType() == FieldDescriptor.JavaType.MESSAGE && !field.isRepeated())
+              && field.getContainingOneof() == null
+              && includingDefaultValueFields.contains(field);
+      }
+      throw new AssertionError("Unknown shouldPrintDefaults: " + shouldPrintDefaults);
+    }
+
     /** Prints a regular message with an optional type URL. */
     private void print(MessageOrBuilder message, @Nullable String typeUrl) throws IOException {
       generator.writeStartObject();
@@ -700,31 +711,23 @@ public class JacksonFormat {
         generator.writeFieldName("@type");
         generator.writePOJO(typeUrl);
       }
-      Map<FieldDescriptor, Object> fieldsToPrint = null;
-      if (alwaysOutputDefaultValueFields || !includingDefaultValueFields.isEmpty()) {
+
+      // message.getAllFields() will already contain all of the fields that would be
+      // printed normally (non-empty repeated fields, with-presence fields that are set, implicit
+      // presence fields that have a nonzero value). Loop over all of the fields to add any more
+      // fields that should be printed based on the shouldPrintDefaults setting.
+      Map<FieldDescriptor, Object> fieldsToPrint;
+      if (shouldPrintDefaults == ShouldPrintDefaults.ONLY_IF_PRESENT) {
+        fieldsToPrint = message.getAllFields();
+      } else {
         fieldsToPrint = new TreeMap<FieldDescriptor, Object>(message.getAllFields());
         for (FieldDescriptor field : message.getDescriptorForType().getFields()) {
-          if (field.isOptional()) {
-            if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                && !message.hasField(field)) {
-              // Always skip empty optional message fields. If not we will recurse indefinitely if
-              // a message has itself as a sub-field.
-              continue;
-            }
-            OneofDescriptor oneof = field.getContainingOneof();
-            if (oneof != null && !message.hasField(field)) {
-              // Skip all oneof fields except the one that is actually set
-              continue;
-            }
-          }
-          if (!fieldsToPrint.containsKey(field)
-              && (alwaysOutputDefaultValueFields || includingDefaultValueFields.contains(field))) {
+          if (shouldSpeciallyPrint(field)) {
             fieldsToPrint.put(field, message.getField(field));
           }
         }
-      } else {
-        fieldsToPrint = message.getAllFields();
       }
+
       for (Map.Entry<FieldDescriptor, Object> field : fieldsToPrint.entrySet()) {
         printField(message, field.getKey(), field.getValue());
       }
@@ -893,7 +896,7 @@ public class JacksonFormat {
 
         case UINT32:
         case FIXED32:
-          String unsignedString = unsignedToString((Integer) value);
+          String unsignedString = Integer.toUnsignedString((Integer) value);
           if (alwaysWithQuotes) {
             generator.writeString(unsignedString);
           } else {
@@ -903,7 +906,7 @@ public class JacksonFormat {
 
         case UINT64:
         case FIXED64:
-          generator.writeString(unsignedToString((Long) value));
+          generator.writeString(Long.toUnsignedString((Long) value));
           break;
 
         case STRING:
@@ -938,26 +941,6 @@ public class JacksonFormat {
           print((Message) value);
           break;
       }
-    }
-  }
-
-  /** Convert an unsigned 32-bit integer to a string. */
-  private static String unsignedToString(final int value) {
-    if (value >= 0) {
-      return Integer.toString(value);
-    } else {
-      return Long.toString(value & 0x00000000FFFFFFFFL);
-    }
-  }
-
-  /** Convert an unsigned 64-bit integer to a string. */
-  private static String unsignedToString(final long value) {
-    if (value >= 0) {
-      return Long.toString(value);
-    } else {
-      // Pull off the most-significant bit so that BigInteger doesn't think
-      // the number is negative, then set it again using setBit().
-      return BigInteger.valueOf(value & Long.MAX_VALUE).setBit(Long.SIZE - 1).toString();
     }
   }
 
@@ -1446,7 +1429,7 @@ public class JacksonFormat {
       try {
         BigDecimal decimalValue = new BigDecimal(json.asText());
         BigInteger value = decimalValue.toBigIntegerExact();
-        if (value.signum() < 0 || value.compareTo(new BigInteger("FFFFFFFF", 16)) > 0) {
+        if (value.signum() < 0 || value.compareTo(MAX_UINT32) > 0) {
           throw new InvalidProtocolBufferException("Out of range uint32 value: " + json);
         }
         return value.intValue();
@@ -1458,6 +1441,7 @@ public class JacksonFormat {
       }
     }
 
+    private static final BigInteger MAX_UINT32 = new BigInteger("FFFFFFFF", 16);
     private static final BigInteger MAX_UINT64 = new BigInteger("FFFFFFFFFFFFFFFF", 16);
 
     private long parseUint64(JsonNode json) throws InvalidProtocolBufferException {
