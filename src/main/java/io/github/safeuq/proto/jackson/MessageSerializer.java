@@ -23,9 +23,8 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.util.JsonFormat;
-import org.jspecify.annotations.Nullable;
-
 import java.io.IOException;
+import org.jspecify.annotations.Nullable;
 
 /**
  * @author Safeuq Mohamed

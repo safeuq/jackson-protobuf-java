@@ -28,15 +28,15 @@ import com.google.protobuf.Internal;
 import com.google.protobuf.Message;
 import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.util.JsonFormat;
-import org.jspecify.annotations.Nullable;
-
 import java.io.IOException;
+import org.jspecify.annotations.Nullable;
 
 public class MessageDeserializers extends Deserializers.Base {
   private final @Nullable TypeRegistry registry;
   private final JsonFormat.@Nullable TypeRegistry oldRegistry;
 
-  public MessageDeserializers(@Nullable TypeRegistry registry, JsonFormat.@Nullable TypeRegistry oldRegistry) {
+  public MessageDeserializers(
+      @Nullable TypeRegistry registry, JsonFormat.@Nullable TypeRegistry oldRegistry) {
     this.registry = registry;
     this.oldRegistry = oldRegistry;
   }
