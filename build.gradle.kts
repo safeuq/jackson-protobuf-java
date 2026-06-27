@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.github.safeuq"
-version = "0.1"
+version = "0.2-SNAPSHOT"
 
 val ossrhUsername: String by project
 val ossrhPassword: String by project
@@ -20,16 +20,16 @@ repositories {
 dependencies {
   val protobufVersion = "4.32.1"
   val guavaVersion = "32.0.1-jre"
+
   implementation("com.google.protobuf:protobuf-java:$protobufVersion")
   implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
   implementation("com.google.guava:guava:$guavaVersion")
+  implementation("org.jspecify:jspecify:1.0.0")
 
 //  implementation("com.google.errorprone:error_prone_annotations:2.5.1")
 //  implementation("com.google.j2objc:j2objc-annotations:1.3")
   implementation("com.google.code.findbugs:jsr305:3.0.2")
-
-  compileOnly("com.fasterxml.jackson.core:jackson-databind:2.15.1")
-  testImplementation("com.fasterxml.jackson.core:jackson-databind:2.15.1")
+  implementation("com.fasterxml.jackson.core:jackson-databind:2.15.1")
 
   testImplementation("org.junit.jupiter:junit-jupiter:5.9.2")
   testImplementation("com.google.guava:guava-testlib:$guavaVersion")

@@ -13,3 +13,8 @@ message Name {
   string full_name = 4;
   string nickname = 5;
 }
+
+message MapMessage {
+  map<string, string> values = 1;
+  map<string, Name> names = 2;
+}

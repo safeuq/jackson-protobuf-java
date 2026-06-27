@@ -808,7 +808,7 @@ public class JacksonFormat {
         Object entryKey = entry.getField(keyField);
         Object entryValue = entry.getField(valueField);
         // Key fields are always double-quoted.
-        printSingleFieldValue(keyField, entryKey, true);
+        generator.writeFieldName((String) entryKey);
         printSingleFieldValue(valueField, entryValue);
       }
       generator.writeEndObject();
