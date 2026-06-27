@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.github.safeuq"
-version = "0.2.1"
+version = "0.2.2-SNAPSHOT"
 
 val ossrhUsername: String by project
 val ossrhPassword: String by project
